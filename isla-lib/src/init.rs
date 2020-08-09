@@ -109,6 +109,7 @@ fn initialize_register_state<'ir, B: BV>(
     let mut registers = HashMap::new();
     for def in defs.iter() {
         if let Def::Register(id, ty) = def {
+            //println!("Register id={:?} ty={:?}", symtab.to_str(*id), ty);
             if let Some(value) = initial_registers.get(id) {
                 value.plausible(ty, symtab).unwrap_or_else(|_| panic!("Bad initial value for {}", symtab.to_str(*id)));
                 registers.insert(*id, UVal::Init(value.clone()));
