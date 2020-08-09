@@ -656,6 +656,11 @@ fn run_loop<'ir, 'task, B: BV>(
     shared_state: &SharedState<'ir, B>,
     solver: &mut Solver<B>,
 ) -> Result<Val<B>, ExecError> {
+    let x1 = shared_state.symtab.get("zR1").unwrap();
+    println!("zR1={:?}", frame.regs().get(&x1));
+    
+    let fname = shared_state.symtab.to_str(frame.function_name);
+    println!("{:?}", &fname);
     loop {
         if frame.pc >= frame.instrs.len() {
             // Currently this happens when evaluating letbindings.
@@ -666,6 +671,8 @@ fn run_loop<'ir, 'task, B: BV>(
         if timeout.timed_out() {
             return Err(ExecError::Timeout);
         }
+
+        //println!("executing {:?}", &frame.instrs[frame.pc]);
 
         match &frame.instrs[frame.pc] {
             Instr::Decl(v, ty) => {
