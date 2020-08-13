@@ -16,11 +16,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
-    - name: Deps
-      run: |
-        sudo apt install z3
 
     - name: Build
       run: |
+        cd
         rustup override set nightly
         cargo test --verbose
