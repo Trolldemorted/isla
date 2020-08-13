@@ -22,4 +22,4 @@ jobs:
 
     - name: Build
       run: |
-        make
+        cargo test
