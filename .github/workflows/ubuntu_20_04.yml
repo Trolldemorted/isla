@@ -19,6 +19,6 @@ jobs:
 
     - name: Build
       run: |
-        cd
+        apt list --installed | grep z3
         rustup override set nightly
         cargo test --verbose
