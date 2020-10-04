@@ -131,6 +131,7 @@ fn get_and_initialize<'ir, B: BV>(
 ) -> Result<Option<Val<B>>, ExecError> {
     Ok(match vars.get(&v) {
         Some(UVal::Uninit(ty)) => {
+            println!("get_and_initialize uninit {}", shared_state.symtab.to_str(v));
             let sym = symbolic(ty, shared_state, solver)?;
             vars.insert(v, UVal::Init(sym.clone()));
             Some(sym)
@@ -187,7 +188,7 @@ fn get_loc_and_initialize<'ir, B: BV>(
             if let Val::Struct(members) = get_loc_and_initialize(loc, local_state, shared_state, solver, accessor)? {
                 match members.get(field) {
                     Some(field_value) => field_value.clone(),
-                    None => panic!("No field"),
+                    None => panic!("No field {:?}", shared_state.symtab.to_str(*field)),
                 }
             } else {
                 panic!("Struct expression did not evaluate to a struct")
@@ -279,7 +280,7 @@ fn eval_exp_with_accessor<'ir, B: BV>(
             {
                 match struct_value.get(field) {
                     Some(field_value) => field_value.clone(),
-                    None => panic!("No field"),
+                    None => panic!("No field {:?}", shared_state.symtab.to_str(*field)),
                 }
             } else {
                 panic!("Struct expression did not evaluate to a struct")
@@ -400,7 +401,15 @@ type Stack<'ir, B> = Option<
     >,
 >;
 
-type Backtrace = Vec<(Name, usize)>;
+pub type Backtrace = Vec<(Name, usize)>;
+
+pub fn backtrace_to_string<'ir, B>(bt: &Backtrace, shared_state: &SharedState<'ir, B>) -> String {
+    let mut stacktrace = String::new();
+    for (name, num) in bt {
+        stacktrace.push_str(&format!("    {} ({})\n", &shared_state.symtab.to_str(*name), num));
+    }
+    stacktrace
+}
 
 /// A `Frame` is an immutable snapshot of the program state while it
 /// is being symbolically executed.
@@ -421,7 +430,7 @@ pub struct Frame<'ir, B> {
 /// executing thread. It is turned into an immutable `Frame` when the
 /// control flow forks on a choice, which can be shared by threads.
 pub struct LocalFrame<'ir, B> {
-    function_name: Name,
+    pub function_name: Name,
     pc: usize,
     forks: u32,
     backjumps: u32,
@@ -656,11 +665,13 @@ fn run_loop<'ir, 'task, B: BV>(
     shared_state: &SharedState<'ir, B>,
     solver: &mut Solver<B>,
 ) -> Result<Val<B>, ExecError> {
-    let x1 = shared_state.symtab.get("zR1").unwrap();
-    println!("zR1={:?}", frame.regs().get(&x1));
+    println!("run_loop");
+    let x1 = shared_state.symtab.get("z_PC").unwrap();
+    println!("z_PC={:?}", frame.regs().get(&x1));
     
     let fname = shared_state.symtab.to_str(frame.function_name);
     println!("{:?}", &fname);
+
     loop {
         if frame.pc >= frame.instrs.len() {
             // Currently this happens when evaluating letbindings.
@@ -701,6 +712,9 @@ fn run_loop<'ir, 'task, B: BV>(
                         let can_be_false = solver.check_sat_with(&test_false).is_sat()?;
 
                         if can_be_true && can_be_false {
+                            println!("{}", shared_state.symtab.to_str(frame.function_name));
+                            println!("{}", backtrace_to_string(&frame.backtrace, shared_state));
+
                             // Trace which asserts are assocated with each fork in the trace, so we
                             // can turn a set of traces into a tree later
                             log_from!(tid, log::FORK, loc);

@@ -689,9 +689,9 @@ pub fn length_bits<B: BV>(bits: &Val<B>, solver: &mut Solver<B>) -> Result<u32, 
         Val::Bits(bits) => Ok(bits.len()),
         Val::Symbolic(bits) => match solver.length(*bits) {
             Some(len) => Ok(len),
-            None => Err(ExecError::Type("length_bits")),
+            None => Err(ExecError::Type("length_bits (solver could not determine length)")),
         },
-        _ => Err(ExecError::Type("length_bits")),
+        other => panic!("{:?}", &other) // Err(ExecError::Type("length_bits ({:?} is not bits or symbolic)")),
     }
 }
 

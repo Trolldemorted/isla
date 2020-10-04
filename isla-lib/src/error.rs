@@ -30,6 +30,9 @@
 use std::error::Error;
 use std::fmt;
 
+use crate::executor::Backtrace;
+use crate::ir::SharedState;
+
 #[derive(Debug)]
 pub enum ExecError {
     Type(&'static str),
@@ -67,6 +70,16 @@ pub enum ExecError {
 impl fmt::Display for ExecError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}", self)
+    }
+}
+
+impl ExecError {
+    pub fn to_string<'ir, B>(&self, bt: &Backtrace, shared_state: &SharedState<'ir, B>) -> String {
+        let mut stacktrace = format!("{}:\n", &self);
+        for (name, num) in bt {
+            stacktrace.push_str(&format!("    {} ({})\n", &shared_state.symtab.to_str(*name), num));
+        }
+        stacktrace
     }
 }
 
