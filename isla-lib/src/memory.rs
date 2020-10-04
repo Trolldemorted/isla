@@ -243,7 +243,9 @@ impl<B: BV> Memory<B> {
             let bytes = u32::try_from(bytes).expect("Bytes did not fit in u32 in memory read");
 
             if let Val::Bits(concrete_addr) = address {
+                println!("bits: {:?}", concrete_addr);
                 for region in &self.regions {
+                    println!("region: {:?}", &region);
                     match region {
                         Region::Constrained(range, generator) if range.contains(&concrete_addr.lower_u64()) => {
                             return read_constrained(
