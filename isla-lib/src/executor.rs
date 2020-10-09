@@ -109,9 +109,9 @@ pub fn symbolic<B: BV>(
 }
 
 #[derive(Clone)]
-struct LocalState<'ir, B> {
+pub struct LocalState<'ir, B> {
     vars: Bindings<'ir, B>,
-    regs: Bindings<'ir, B>,
+    pub regs: Bindings<'ir, B>,
     lets: Bindings<'ir, B>,
 }
 
@@ -135,7 +135,10 @@ fn get_and_initialize<'ir, B: BV>(
 ) -> Result<Option<Val<B>>, ExecError> {
     Ok(match vars.get(&v) {
         Some(UVal::Uninit(ty)) => {
-            println!("get_and_initialize uninit {}", shared_state.symtab.to_str(v));
+            let name = shared_state.symtab.to_str(v);
+            if !name.starts_with("zg") {
+                println!("get_and_initialize uninit {}", shared_state.symtab.to_str(v));
+            }
             let sym = symbolic(ty, shared_state, solver)?;
             vars.insert(v, UVal::Init(sym.clone()));
             Some(sym)
@@ -422,7 +425,7 @@ pub struct Frame<'ir, B> {
     pc: usize,
     forks: u32,
     backjumps: u32,
-    local_state: Arc<LocalState<'ir, B>>,
+    pub local_state: Arc<LocalState<'ir, B>>,
     memory: Arc<Memory<B>>,
     instrs: &'ir [Instr<Name, B>],
     stack_vars: Arc<Vec<Bindings<'ir, B>>>,
@@ -435,7 +438,7 @@ pub struct Frame<'ir, B> {
 /// control flow forks on a choice, which can be shared by threads.
 pub struct LocalFrame<'ir, B> {
     pub function_name: Name,
-    pc: usize,
+    pub pc: usize,
     forks: u32,
     backjumps: u32,
     local_state: LocalState<'ir, B>,
@@ -669,12 +672,11 @@ fn run_loop<'ir, 'task, B: BV>(
     shared_state: &SharedState<'ir, B>,
     solver: &mut Solver<B>,
 ) -> Result<Val<B>, ExecError> {
-    println!("run_loop");
-    let x1 = shared_state.symtab.get("z_PC").unwrap();
-    println!("z_PC={:?}", frame.regs().get(&x1));
-    
-    let fname = shared_state.symtab.to_str(frame.function_name);
-    println!("{:?}", &fname);
+    //println!("run_loop");
+    //let x1 = shared_state.symtab.get("z_PC").unwrap();
+    //println!("z_PC={:?}", frame.regs().get(&x1));
+    //let fname = shared_state.symtab.to_str(frame.function_name);
+    //println!("{:?}", &fname);
 
     loop {
         if frame.pc >= frame.instrs.len() {
@@ -716,6 +718,7 @@ fn run_loop<'ir, 'task, B: BV>(
                         let can_be_false = solver.check_sat_with(&test_false).is_sat()?;
 
                         if can_be_true && can_be_false {
+                            println!("forking at:");
                             println!("{}", shared_state.symtab.to_str(frame.function_name));
                             println!("{}", backtrace_to_string(&frame.backtrace, shared_state));
 
@@ -1038,11 +1041,11 @@ pub type Collector<'ir, B, R> = dyn 'ir
 /// SMT solver state, and finally an option SMTLIB definiton which is
 /// added to the solver state when the task is resumed.
 pub struct Task<'ir, 'task, B> {
-    id: usize,
-    frame: Frame<'ir, B>,
-    checkpoint: Checkpoint<B>,
-    fork_cond: Option<smtlib::Def>,
-    stop_functions: Option<&'task HashSet<Name>>,
+    pub id: usize,
+    pub frame: Frame<'ir, B>,
+    pub checkpoint: Checkpoint<B>,
+    pub fork_cond: Option<smtlib::Def>,
+    pub stop_functions: Option<&'task HashSet<Name>>,
 }
 
 impl<'ir, 'task, B> Task<'ir, 'task, B> {

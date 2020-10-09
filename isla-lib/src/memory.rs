@@ -637,7 +637,7 @@ fn read_concrete<B: BV>(
     reverse_endianness(&mut byte_vec);
 
     if byte_vec.len() <= 8 {
-        log!(log::MEMORY, &format!("Read concrete: {:?}", byte_vec));
+        log!(log::MEMORY, &format!("Read concrete ({:#018X}): {:?}", address, byte_vec));
 
         let value = Val::Bits(B::from_bytes(&byte_vec));
         solver.add_event(Event::ReadMem {
