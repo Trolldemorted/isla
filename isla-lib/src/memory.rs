@@ -65,7 +65,7 @@ pub enum Region<B> {
     /// A read only region of arbitrary symbolic locations intended for code
     SymbolicCode(Range<Address>),
     /// A region of concrete read-only memory
-    Concrete(Range<Address>, HashMap<Address, u8>),
+    Concrete(Range<Address>, HashMap<Address, u8>)
 }
 
 pub enum SmtKind {
@@ -243,9 +243,7 @@ impl<B: BV> Memory<B> {
             let bytes = u32::try_from(bytes).expect("Bytes did not fit in u32 in memory read");
 
             if let Val::Bits(concrete_addr) = address {
-                println!("bits: {:?}", concrete_addr);
                 for region in &self.regions {
-                    println!("region: {:?}", &region);
                     match region {
                         Region::Constrained(range, generator) if range.contains(&concrete_addr.lower_u64()) => {
                             return read_constrained(
@@ -520,7 +518,7 @@ fn read_concrete<B: BV>(
     reverse_endianness(&mut byte_vec);
 
     if byte_vec.len() <= 8 {
-        log!(log::MEMORY, &format!("Read concrete: {:?}", byte_vec));
+        log!(log::MEMORY, &format!("Read concrete ({:#018X}): {:?}", address, byte_vec));
 
         let value = Val::Bits(B::from_bytes(&byte_vec));
         solver.add_event(Event::ReadMem {
