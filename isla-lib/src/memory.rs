@@ -64,7 +64,7 @@ pub enum Region<B> {
     /// A read only region of arbitrary symbolic locations intended for code
     SymbolicCode(Range<Address>),
     /// A region of concrete read-only memory
-    Concrete(Range<Address>, HashMap<Address, u8>),
+    Concrete(Range<Address>, HashMap<Address, u8>)
 }
 
 pub enum SmtKind {
@@ -228,9 +228,7 @@ impl<B: BV> Memory<B> {
             let bytes = u32::try_from(bytes).expect("Bytes did not fit in u32 in memory read");
 
             if let Val::Bits(concrete_addr) = address {
-                println!("bits: {:?}", concrete_addr);
                 for region in &self.regions {
-                    println!("region: {:?}", &region);
                     match region {
                         Region::Constrained(range, generator) if range.contains(&concrete_addr.lower_u64()) => {
                             return read_constrained(
@@ -275,7 +273,7 @@ impl<B: BV> Memory<B> {
         data: Val<B>,
         solver: &mut Solver<B>,
     ) -> Result<Val<B>, ExecError> {
-        log!(log::MEMORY, &format!("Write: {:?} {:?} {:?}", write_kind, address, data));
+        log!(log::MEMORY, &format!("Write: write_kind={:?} address={:?} data={:?}", write_kind, address, data));
 
         if let Val::Bits(_) = address {
             self.write_symbolic(write_kind, address, data, solver)
@@ -303,10 +301,8 @@ impl<B: BV> Memory<B> {
             Some(c) => c.symbolic_read(&self.regions, solver, &Val::Symbolic(value), &read_kind, &address, bytes),
             None => (),
         };
+        log!(log::MEMORY, &format!("Read symbolic ({:?}): {}", &address, value));
         solver.add_event(Event::ReadMem { value: Val::Symbolic(value), read_kind, address, bytes });
-
-        log!(log::MEMORY, &format!("Read symbolic: {}", value));
-
         Ok(Val::Symbolic(value))
     }
 
@@ -445,7 +441,7 @@ fn read_concrete<B: BV>(
     reverse_endianness(&mut byte_vec);
 
     if byte_vec.len() <= 8 {
-        log!(log::MEMORY, &format!("Read concrete: {:?}", byte_vec));
+        log!(log::MEMORY, &format!("Read concrete ({:#018X}): {:?}", address, byte_vec));
 
         let value = Val::Bits(B::from_bytes(&byte_vec));
         solver.add_event(Event::ReadMem { value, read_kind, address: Val::Bits(B::from_u64(address)), bytes });

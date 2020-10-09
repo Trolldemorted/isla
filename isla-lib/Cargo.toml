@@ -29,6 +29,7 @@ serde = "1.0.104"
 bincode = "1.2.1"
 sha2 = "0.8.1"
 petgraph = "0.5.0"
+elfloader = { path = "../../rust-elfloader" }
 
 [[bin]]
 name = "test"
