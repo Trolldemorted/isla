@@ -27,56 +27,6 @@ use isla_lib::elf_loader;
 use isla_lib::ir::UVal;
 use crossbeam::queue::SegQueue;
 
-
-fn step<'ir, 'task, B: BV>(
-    task: isla_lib::executor::Task<'ir, 'task, B>,
-    shared_state: &isla_lib::ir::SharedState<'ir, B>) -> Vec<executor::Task<'ir, 'task, B>> {
-    println!("--------------- begin step -----------------------------");
-    let queue = Arc::new(SegQueue::new());
-    executor::start_multi(
-        1,
-        None,
-        vec![task],
-        shared_state,
-        queue.clone(),
-        &simple_collector,
-    );
-    let mut successors = vec!();
-    loop {
-        match queue.pop() {
-            Ok(Ok((mut local_frame, checkpoint))) => {
-                local_frame.pc = 0;
-                let frame = executor::freeze_frame(&local_frame);
-                successors.push(executor::Task {
-                    id: 42,
-                    frame: frame,
-                    checkpoint: checkpoint,
-                    fork_cond: None,
-                    stop_functions: None
-                });
-            }
-            Ok(Err((error, backtrace))) =>  {
-                panic!("queue got error: {}", error.to_string(&backtrace, &shared_state));
-                break
-            }
-            Err(_) => {
-                break
-            }
-        }
-    }
-    println!("--------------- end step -------------------------------");
-    println!("{:?}", &queue);
-
-    for successor in &successors {
-        println!("Successor:");
-        //print_registers(&successor.frame, &shared_state.symtab);
-        print_register(&successor.frame, &shared_state.symtab, "z_PC");
-        print_register(&successor.frame, &shared_state.symtab, "zR30");
-        print_register(&successor.frame, &shared_state.symtab, "zSP_EL0");
-    }
-    successors
-}
-
 fn main() {
     let now = Instant::now();
     let config_file = PathBuf::from(r"C:\Users\Benni\Downloads\aarch64.toml");
@@ -90,6 +40,15 @@ fn main() {
     println!("Loaded architecture in: {}ms", now.elapsed().as_millis());
 
     let Initialized { mut regs, lets, shared_state } = initialize_architecture(&mut ir, symtab, &isa_config, AssertionMode::Optimistic);
+    regs.insert(shared_state.symtab.lookup("z_PC"), UVal::Init(Val::Bits(B64::from_u64(0x80000000))));
+
+
+    let function_id = shared_state.symtab.lookup("zTakeReset");
+    let (args, _, instrs) = shared_state.functions.get(&function_id).unwrap();
+    let mut lf: LocalFrame<B64> = LocalFrame::new(function_id, args, None, instrs);
+    lf.add_lets(&lets);
+    lf.add_regs(&regs);
+    // Initialize registers
     regs.insert(shared_state.symtab.lookup("z_PC"), UVal::Init(Val::Bits(B64::from_u64(0x0000000000215f38))));
     regs.insert(shared_state.symtab.lookup("zR14"), UVal::Init(Val::Bits(B64::from_u64(0))));
     regs.insert(shared_state.symtab.lookup("zR29"), UVal::Init(Val::Bits(B64::from_u64(0))));
@@ -144,54 +103,67 @@ fn main() {
     pstate.insert(shared_state.symtab.lookup("zE"), Val::Bits(B64::new(0, 1)));
     pstate.insert(shared_state.symtab.lookup("zM"), Val::Bits(B64::new(0, 5)));
     regs.insert(shared_state.symtab.lookup("zPSTATE"), UVal::Init(Val::Struct(pstate)));
-
-    //let function_id = shared_state.symtab.lookup("zStep_CPU");
-    let function_id = shared_state.symtab.lookup("zTakeReset");
-    let (args, _, instrs) = shared_state.functions.get(&function_id).unwrap();
-    let mut lf: LocalFrame<B64> = LocalFrame::new(function_id, args, None, instrs);
-    lf.add_lets(&lets);
-    lf.add_regs(&regs);
     let mem = lf.memory_mut();
-    elf_loader::load_elf("./router", mem);
     let mut task = lf.task(0);
     log::set_flags(0xffffffff);
 
+    let mut succs = step(task, &shared_state);
+    if succs.len() > 1 {
+        panic!("reset forked");
+    }
+    task = succs.remove(0);
+}
+
+fn step<'ir, 'task, B: BV>(
+    task: isla_lib::executor::Task<'ir, 'task, B>,
+    shared_state: &isla_lib::ir::SharedState<'ir, B>) -> Vec<executor::Task<'ir, 'task, B>> {
+    println!("--------------- begin step -----------------------------");
+    let queue = Arc::new(SegQueue::new());
+    executor::start_multi(
+        1,
+        None,
+        vec![task],
+        shared_state,
+        queue.clone(),
+        &simple_collector,
+    );
+    let mut successors = vec!();
     loop {
-        let mut succs = step(task, &shared_state);
-        if succs.len() > 1 {
-            println!("fork!");
-            break;
+        match queue.pop() {
+            Ok(Ok((mut local_frame, checkpoint))) => {
+                local_frame.pc = 0;
+                let frame = executor::freeze_frame(&local_frame);
+                successors.push(executor::Task {
+                    id: 42,
+                    frame: frame,
+                    checkpoint: checkpoint,
+                    fork_cond: None,
+                    stop_functions: None
+                });
+            }
+            Ok(Err((error, backtrace))) =>  {
+                println!("queue got error: {}", error.to_string(&backtrace, &shared_state));
+                break
+            }
+            Err(_) => {
+                break
+            }
         }
-        task = succs.remove(0);
     }
-}
+    println!("--------------- end step -------------------------------");
+    println!("{:?}", &queue);
 
-fn print_register<'ir, B: BV>(frame: &Frame<'ir, B>, symtab: &Symtab, name: &str) {
-    let x1 = symtab.get(name).unwrap();
-    let val = frame.local_state.regs.get(&x1).unwrap();
-    match val {
-        UVal::Init(Val::Bits(bits)) => println!("{}={:#018X}", name, bits.lower_u64()),
-        other => panic!("{} is not bits: {:?}", name, other)
+    for successor in &successors {
+        println!("Successor:");
+        print_registers(&successor.frame, &shared_state.symtab);
+        //print_register(&successor.frame, &shared_state.symtab, "z_PC");
+        //print_register(&successor.frame, &shared_state.symtab, "zR30");
+        //print_register(&successor.frame, &shared_state.symtab, "zSP_EL0");
     }
-}
-
-fn read_register<'ir, B: BV>(frame: &Frame<'ir, B>, symtab: &Symtab, name:&str) -> u64 {
-    let x1 = symtab.get(name).unwrap();
-    let val = frame.local_state.regs.get(&x1).unwrap();
-    match val {
-        UVal::Init(Val::Bits(bits)) => bits.lower_u64(),
-        other => panic!("{:?}", other)
-    }
-}
-
-fn print_registers<'ir, B: BV>(frame: &Frame<'ir, B>, symtab: &Symtab) {
-    for (reg_name, reg_val) in &frame.local_state.regs {
-        println!("{:?}={:?}", symtab.to_str(*reg_name), reg_val)
-    }
+    successors
 }
 
 pub type SimpleResultQueue<'ir, B> = SegQueue<Result<(LocalFrame<'ir, B>, Checkpoint<B>), (ExecError, Backtrace)>>;
-
 fn simple_collector<'ir, B: BV>(
     _: usize,
     task_id: usize,
@@ -206,5 +178,11 @@ fn simple_collector<'ir, B: BV>(
             collected.push(Ok((frame, smt::checkpoint(&mut solver))))
         },
         Err(e) => collected.push(Err(e))
+    }
+}
+
+fn print_registers<'ir, B: BV>(frame: &Frame<'ir, B>, symtab: &Symtab) {
+    for (reg_name, reg_val) in &frame.local_state.regs {
+        println!("{:?}={:?}", symtab.to_str(*reg_name), reg_val)
     }
 }
