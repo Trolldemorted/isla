@@ -7,7 +7,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use isla_lib::concrete::{bitvector64::B64, BV};
 use isla_lib::memory::Memory;
-use isla_lib::init::{initialize_architecture, Initialized};
+use isla_lib::init;
+use isla_lib::init::Initialized;
 use isla_lib::ir::serialize as ir_serialize;
 use isla_lib::ir::*;
 use isla_lib::executor::LocalFrame;
@@ -65,23 +66,18 @@ fn step<'ir, 'task, B: BV>(
         }
     }
     println!("--------------- end step -------------------------------");
-    println!("{:?}", &queue);
-
-    for successor in &successors {
-        println!("Successor:");
-        //print_registers(&successor.frame, &shared_state.symtab);
-        print_register(&successor.frame, &shared_state.symtab, "z_PC");
-        print_register(&successor.frame, &shared_state.symtab, "zR30");
-        print_register(&successor.frame, &shared_state.symtab, "zSP_EL0");
-    }
+    //println!("{:?}", &queue);
     successors
 }
 
 fn main() {
     let now = Instant::now();
-    let config_file = PathBuf::from(r"C:\Users\Benni\Downloads\aarch64.toml");
-    let symtab_file = PathBuf::from(r"C:\Users\Benni\Downloads\aarch64.symtab");
-    let ir_file     = PathBuf::from(r"C:\Users\Benni\Downloads\aarch64.irx");
+    let folder = PathBuf::from(r"C:\Users\Benni\repositories\master\verification\sail-arm\1166c197b127ed30d95421dcfa5fc59716aa1368");
+    //let folder = PathBuf::from(r"C:\Users\Benni\Downloads\");
+    //let folder = PathBuf::from(r"C:\Users\Benni\repositories\master-arm\aarch64");
+    let config_file = folder.join("aarch64.toml");
+    let symtab_file = folder.join("aarch64.symtab");
+    let ir_file     = folder.join("aarch64.irx");
 
     let strings: Vec<String> = bincode::deserialize(&fs::read(&symtab_file).unwrap()).unwrap();
     let symtab = Symtab::from_raw_table(&strings);
@@ -89,81 +85,52 @@ fn main() {
     let isa_config: ISAConfig<B64> = ISAConfig::parse(&fs::read_to_string(&config_file).unwrap(), &symtab).unwrap();
     println!("Loaded architecture in: {}ms", now.elapsed().as_millis());
 
-    let Initialized { mut regs, lets, shared_state } = initialize_architecture(&mut ir, symtab, &isa_config, AssertionMode::Optimistic);
-    regs.insert(shared_state.symtab.lookup("z_PC"), UVal::Init(Val::Bits(B64::from_u64(0x0000000000215f38))));
-    regs.insert(shared_state.symtab.lookup("zR14"), UVal::Init(Val::Bits(B64::from_u64(0))));
-    regs.insert(shared_state.symtab.lookup("zR29"), UVal::Init(Val::Bits(B64::from_u64(0))));
-    regs.insert(shared_state.symtab.lookup("zR30"), UVal::Init(Val::Bits(B64::from_u64(0))));
-    regs.insert(shared_state.symtab.lookup("zSP_EL0"), UVal::Init(Val::Bits(B64::from_u64(0x10000))));
-    regs.insert(shared_state.symtab.lookup("zSP_EL3"), UVal::Init(Val::Bits(B64::from_u64(0x10000))));
-    regs.insert(shared_state.symtab.lookup("zCNTKCTL_EL1"), UVal::Init(Val::Bits(B64::new(0, 32))));
-    regs.insert(shared_state.symtab.lookup("zMPIDR_EL1"), UVal::Init(Val::Bits(B64::from_u64(0))));
-    regs.insert(shared_state.symtab.lookup("zOSLSR_EL1"), UVal::Init(Val::Bits(B64::new(0, 64))));      // lock stuff
-    regs.insert(shared_state.symtab.lookup("zOSDLR_EL1"), UVal::Init(Val::Bits(B64::new(0, 64))));      // double lock stuff
-    regs.insert(shared_state.symtab.lookup("zCNTHCTL_EL2"), UVal::Init(Val::Bits(B64::new(0, 32))));
-    regs.insert(shared_state.symtab.lookup("zHCR_EL2"), UVal::Init(Val::Bits(B64::from_u64(0))));
-    regs.insert(shared_state.symtab.lookup("zSCTLR_EL3"), UVal::Init(Val::Bits(B64::new(0, 64))));      // this is most likely invalid
-    regs.insert(shared_state.symtab.lookup("zSCR_EL3"), UVal::Init(Val::Bits(B64::new(0, 32))));
-    regs.insert(shared_state.symtab.lookup("zEDSCR"), UVal::Init(Val::Bits(B64::new(0, 32))));
-    regs.insert(shared_state.symtab.lookup("z__defaultRAM"), UVal::Init(Val::Bits(B64::new(4096, 56))));
-    regs.insert(shared_state.symtab.lookup("zCNTCV"), UVal::Init(Val::Bits(B64::new(0, 64))));
-    // these are set in sail
-    //regs.insert(shared_state.symtab.lookup("zCFG_ID_AA64PFR0_EL1_EL3"), UVal::Init(Val::Bits(B64::new(2, 4))));
-    //regs.insert(shared_state.symtab.lookup("zCFG_ID_AA64PFR0_EL1_EL2"), UVal::Init(Val::Bits(B64::new(2, 4))));
-    //regs.insert(shared_state.symtab.lookup("zCFG_ID_AA64PFR0_EL1_EL1"), UVal::Init(Val::Bits(B64::new(2, 4))));
-    //regs.insert(shared_state.symtab.lookup("zCFG_ID_AA64PFR0_EL1_EL0"), UVal::Init(Val::Bits(B64::new(2, 4))));
-    regs.insert(shared_state.symtab.lookup("z__highest_el_aarch32"), UVal::Init(Val::Bool(false)));
-    regs.insert(shared_state.symtab.lookup("z_IRQPending"), UVal::Init(Val::Bool(false)));
-    regs.insert(shared_state.symtab.lookup("z_FIQPending"), UVal::Init(Val::Bool(false)));
+    let Initialized { mut regs, lets, shared_state } = init::initialize_architecture(&mut ir, symtab, &isa_config, AssertionMode::Optimistic);
+    init::initialize_registers_arm64(&mut regs, &shared_state);
 
-    let mut pstate = HashMap::new();
-    pstate.insert(shared_state.symtab.lookup("zN"), Val::Bits(B64::new(0, 1)));
-    pstate.insert(shared_state.symtab.lookup("zZ"), Val::Bits(B64::new(0, 1)));
-    pstate.insert(shared_state.symtab.lookup("zC"), Val::Bits(B64::new(0, 1)));
-    pstate.insert(shared_state.symtab.lookup("zV"), Val::Bits(B64::new(0, 1)));
-    pstate.insert(shared_state.symtab.lookup("zD"), Val::Bits(B64::new(0, 1)));
-    pstate.insert(shared_state.symtab.lookup("zA"), Val::Bits(B64::new(0, 1)));
-    pstate.insert(shared_state.symtab.lookup("zI"), Val::Bits(B64::new(0, 1)));
-    pstate.insert(shared_state.symtab.lookup("zF"), Val::Bits(B64::new(0, 1)));
-    pstate.insert(shared_state.symtab.lookup("zPAN"), Val::Bits(B64::new(0, 1)));
-    pstate.insert(shared_state.symtab.lookup("zUAO"), Val::Bits(B64::new(0, 1)));
-    pstate.insert(shared_state.symtab.lookup("zDIT"), Val::Bits(B64::new(0, 1)));
-    pstate.insert(shared_state.symtab.lookup("zTCO"), Val::Bits(B64::new(0, 1)));
-    pstate.insert(shared_state.symtab.lookup("zBTYPE"), Val::Bits(B64::new(0, 2)));
-    pstate.insert(shared_state.symtab.lookup("zSS"), Val::Bits(B64::new(0, 1)));
-    pstate.insert(shared_state.symtab.lookup("zIL"), Val::Bits(B64::new(0, 1)));
-    pstate.insert(shared_state.symtab.lookup("zEL"), Val::Bits(B64::new(3, 2)));
-    pstate.insert(shared_state.symtab.lookup("znRW"), Val::Bits(B64::new(0, 1)));
-    pstate.insert(shared_state.symtab.lookup("zSP"), Val::Bits(B64::new(0, 1)));
-    pstate.insert(shared_state.symtab.lookup("zQ"), Val::Bits(B64::new(0, 1)));
-    pstate.insert(shared_state.symtab.lookup("zGE"), Val::Bits(B64::new(0, 4)));
-    pstate.insert(shared_state.symtab.lookup("zSSBS"), Val::Bits(B64::new(0, 1)));
-    pstate.insert(shared_state.symtab.lookup("zIT"), Val::Bits(B64::new(0, 8)));
-    pstate.insert(shared_state.symtab.lookup("zJ"), Val::Bits(B64::new(0, 1)));
-    pstate.insert(shared_state.symtab.lookup("zT"), Val::Bits(B64::new(0, 1)));
-    pstate.insert(shared_state.symtab.lookup("zE"), Val::Bits(B64::new(0, 1)));
-    pstate.insert(shared_state.symtab.lookup("zM"), Val::Bits(B64::new(0, 5)));
-    regs.insert(shared_state.symtab.lookup("zPSTATE"), UVal::Init(Val::Struct(pstate)));
+    let step_function_id = shared_state.symtab.lookup("zStep_CPU");
+    let reset_function_id = shared_state.symtab.lookup("zTakeReset");
+    let (reset_args, _, reset_instrs) = shared_state.functions.get(&reset_function_id).unwrap();
+    let (_step_args, _, step_instrs) = shared_state.functions.get(&step_function_id).unwrap();
 
-    //let function_id = shared_state.symtab.lookup("zStep_CPU");
-    let function_id = shared_state.symtab.lookup("zTakeReset");
-    let (args, _, instrs) = shared_state.functions.get(&function_id).unwrap();
-    let mut lf: LocalFrame<B64> = LocalFrame::new(function_id, args, None, instrs);
+    let vals = vec!(Val::Bool(true));
+    let mut lf: LocalFrame<B64> = LocalFrame::new(reset_function_id, reset_args, Some(&vals), reset_instrs);
     lf.add_lets(&lets);
     lf.add_regs(&regs);
     let mem = lf.memory_mut();
     elf_loader::load_elf("./router", mem);
     let mut task = lf.task(0);
-    log::set_flags(0xffffffff);
+    print_register(&task.frame, &shared_state.symtab, "zPSTATE");
 
+    // cold reset device (TakeReset(true))
+    task = execute_sail_function_no_fork(task, &shared_state);
+
+    // prepare os emulation
+    log::set_flags(0xffffffff);
+    let mut lf = executor::unfreeze_frame(&task.frame);
+    lf.regs_mut().insert(shared_state.symtab.lookup("z_PC"), UVal::Init(Val::Bits(B64::from_u64(0x0000000000215f38))));
+    lf.function_name = step_function_id;
+    lf.instrs = step_instrs;
+    init::reinitialize_registers_arm64(lf.regs_mut(), &shared_state);
+    task.frame = executor::freeze_frame(&lf);
+
+    // go!
+    println!("starting execution");
     loop {
-        let mut succs = step(task, &shared_state);
-        if succs.len() > 1 {
-            println!("fork!");
-            break;
-        }
-        task = succs.remove(0);
+        task = execute_sail_function_no_fork(task, &shared_state);
+        //print_registers(&task.frame, &shared_state.symtab);
+        print_register(&task.frame, &shared_state.symtab, "z_PC");
+        print_register(&task.frame, &shared_state.symtab, "zR30");
+        print_register(&task.frame, &shared_state.symtab, "zSP_EL3");
     }
+}
+
+fn execute_sail_function_no_fork<'ir, 'task, B: BV>(task: executor::Task<'ir, 'task, B>, shared_state: &SharedState<'ir, B>) -> executor::Task<'ir, 'task, B> {
+    let mut succs = step(task, &shared_state);
+    if succs.len() > 1 {
+        panic!("single_step_no_fork forked")
+    }
+    succs.remove(0)
 }
 
 fn print_register<'ir, B: BV>(frame: &Frame<'ir, B>, symtab: &Symtab, name: &str) {
@@ -171,6 +138,13 @@ fn print_register<'ir, B: BV>(frame: &Frame<'ir, B>, symtab: &Symtab, name: &str
     let val = frame.local_state.regs.get(&x1).unwrap();
     match val {
         UVal::Init(Val::Bits(bits)) => println!("{}={:#018X}", name, bits.lower_u64()),
+        UVal::Init(Val::Struct(s)) => {
+            let mut buf = format!("{}=\n", name);
+            for (k, v) in s.iter() {
+                buf.push_str(&format!("    .{} = {:?}\n", &symtab.to_str(*k), v));
+            }
+            println!("{}", &buf);
+        },
         other => panic!("{} is not bits: {:?}", name, other)
     }
 }
@@ -202,7 +176,7 @@ fn simple_collector<'ir, B: BV>(
 ) {
     match result {
         Ok((_, frame)) => {
-            println!("collector got frame: {:?}", shared_state.symtab.to_str(frame.function_name));
+            //println!("collector got frame: {:?}", shared_state.symtab.to_str(frame.function_name));
             collected.push(Ok((frame, smt::checkpoint(&mut solver))))
         },
         Err(e) => collected.push(Err(e))
