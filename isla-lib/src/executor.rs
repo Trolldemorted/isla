@@ -115,6 +115,14 @@ pub struct LocalState<'ir, B> {
     lets: Bindings<'ir, B>,
 }
 
+impl<'ir, B: BV> LocalState<'ir, B> {
+    fn print_vars(&self, shared_state: &SharedState<B>) {
+        for (k, v) in &self.vars {
+            println!("{} = {:?}", shared_state.symtab.to_str(*k), v)
+        }
+    }
+}
+
 /// Gets a value from a variable `Bindings` map. Note that this function is set up to handle the
 /// following case:
 ///
@@ -421,7 +429,7 @@ pub fn backtrace_to_string<'ir, B>(bt: &Backtrace, shared_state: &SharedState<'i
 /// is being symbolically executed.
 #[derive(Clone)]
 pub struct Frame<'ir, B> {
-    function_name: Name,
+    pub function_name: Name,
     pc: usize,
     forks: u32,
     backjumps: u32,
@@ -443,7 +451,7 @@ pub struct LocalFrame<'ir, B> {
     backjumps: u32,
     local_state: LocalState<'ir, B>,
     memory: Memory<B>,
-    instrs: &'ir [Instr<Name, B>],
+    pub instrs: &'ir [Instr<Name, B>],
     stack_vars: Vec<Bindings<'ir, B>>,
     stack_call: Stack<'ir, B>,
     backtrace: Backtrace,
@@ -718,9 +726,16 @@ fn run_loop<'ir, 'task, B: BV>(
                         let can_be_false = solver.check_sat_with(&test_false).is_sat()?;
 
                         if can_be_true && can_be_false {
-                            println!("forking at:");
+                            println!("forking ({:?} can be true and false) at:", exp);
+                            println!("{:?}", frame.local_state.print_vars(shared_state));
+
+                            match exp {
+                                Exp::Id(name) => println!("{}", shared_state.symtab.to_str(*name)),
+                                _ => panic!()
+                            }
                             println!("{}", shared_state.symtab.to_str(frame.function_name));
                             println!("{}", backtrace_to_string(&frame.backtrace, shared_state));
+                            panic!();
 
                             // Trace which asserts are assocated with each fork in the trace, so we
                             // can turn a set of traces into a tree later
@@ -796,6 +811,7 @@ fn run_loop<'ir, 'task, B: BV>(
             }
 
             Instr::Call(loc, _, f, args) => {
+                //println!("Call {}", shared_state.symtab.to_str(*f));
                 if let Some(s) = stop_functions {
                     if s.contains(f) {
                         let symbol = zencode::decode(shared_state.symtab.to_str(*f));
@@ -869,6 +885,9 @@ fn run_loop<'ir, 'task, B: BV>(
                             .map(|arg| eval_exp(arg, &mut frame.local_state, shared_state, solver))
                             .collect::<Result<Vec<Val<B>>, _>>()?;
 
+                        //for i in 0..params.len() {
+                        //    println!("    {} = {:?}", shared_state.symtab.to_str(params[i].0), args[i])
+                        //}
                         if shared_state.probes.contains(f) {
                             let symbol = zencode::decode(shared_state.symtab.to_str(*f));
                             log_from!(
