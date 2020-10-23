@@ -99,6 +99,10 @@ fn main() {
     lf.add_regs(&regs);
     let mem = lf.memory_mut();
     elf_loader::load_elf("./router", mem);
+    mem.add_stable_region(0x1000..0xffff, HashMap::new());              // stack
+    mem.add_symbolic_region(0x000000000a003e00..0x000000000b000000);    // virtio device
+    mem.add_symbolic_region(0x46000000..0x47000000);                    // "heap"
+    
     let mut task = lf.task(0);
     print_register(&task.frame, &shared_state.symtab, "zPSTATE");
 
@@ -119,9 +123,13 @@ fn main() {
     loop {
         task = execute_sail_function_no_fork(task, &shared_state);
         //print_registers(&task.frame, &shared_state.symtab);
+        println!("{:?}", &task.checkpoint.num);
         print_register(&task.frame, &shared_state.symtab, "z_PC");
         print_register(&task.frame, &shared_state.symtab, "zR30");
         print_register(&task.frame, &shared_state.symtab, "zSP_EL3");
+        print_register(&task.frame, &shared_state.symtab, "zSP_EL2");
+        print_register(&task.frame, &shared_state.symtab, "zSP_EL1");
+        print_register(&task.frame, &shared_state.symtab, "zSP_EL0");
     }
 }
 

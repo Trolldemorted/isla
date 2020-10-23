@@ -116,7 +116,7 @@ pub enum SmtKind {
     WriteData,
 }
 
-impl<B> fmt::Debug for Region<B> {
+impl<B: BV> fmt::Debug for Region<B> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Region::*;
         match self {
@@ -199,7 +199,7 @@ fn make_bv_bit_pair<B>(left: Val<B>, right: Val<B>) -> Val<B> {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct Memory<B> {
+pub struct Memory<B: BV> {
     regions: Vec<Region<B>>,
     client_info: Option<Box<dyn MemoryCallbacks<B>>>,
 }
@@ -255,6 +255,10 @@ impl<B: BV> Memory<B> {
 
     pub fn add_concrete_region(&mut self, range: Range<Address>, contents: HashMap<Address, u8>) {
         self.regions.push(Region::Concrete(range, contents))
+    }
+
+    pub fn add_stable_region(&mut self, range: Range<Address>, contents: HashMap<Address, Val<B>>) {
+        self.regions.push(Region::Stable(range, contents))
     }
 
     pub fn add_zero_region(&mut self, range: Range<Address>) {
@@ -501,8 +505,7 @@ impl<B: BV> Memory<B> {
             None => (),
         };
         solver.add_event(Event::WriteMem { value, write_kind, address, data, bytes, tag_value: tag });
-
-        Ok(Val::Symbolic(value))
+        Ok(Val::Unit)
     }
 
     pub fn smt_address_constraint(
@@ -655,5 +658,49 @@ fn read_concrete<B: BV>(
     } else {
         // TODO: Handle reads > 64 bits
         Err(ExecError::BadRead)
+    }
+}
+
+fn read_stable<B: BV>(
+    region: &HashMap<Address, Val<B>>,
+    read_kind: Val<B>,
+    address: Address,
+    bytes: u32,
+    solver: &mut Solver<B>,
+    tag: bool,
+) -> Result<Val<B>, ExecError> {
+    if let Some(read) = region.get(&address) {
+        match read {
+            Val::Bits(b) => {
+                if b.len() < bytes {
+                    // The saved Val is too small
+                    unimplemented!()
+                }
+                else if b.len() == bytes {
+                    Ok(Val::Bits(*b))
+                } else {
+                    // The saved Val is too big
+                    Ok(Val::Bits(b.slice(0, bytes * 8).unwrap()))
+                }
+            },
+            Val::Symbolic(s) => { //TODO do it properly: the accessed memory region may spread across multiple symbols
+                Ok(Val::Symbolic(*s))
+            },
+            _ => Err(ExecError::BadRead)
+        }
+    } else {
+        // Val was not stored directly, but could be a subset of a Val to the left
+        let left = read_stable(region, read_kind, address - 1, bytes + 1, solver, tag)?;
+        match left {
+            Val::Bits(b) => {
+                if b.len() + 8 < bytes * 8 {
+                    unimplemented!()
+                } else {
+                    assert!(b.len() >= (bytes * 8) + 8);
+                    Ok(Val::Bits(b.slice(8, bytes * 8).unwrap()))
+                } 
+            },
+            _ => unimplemented!()
+        }
     }
 }

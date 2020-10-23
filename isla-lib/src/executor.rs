@@ -417,7 +417,7 @@ type Stack<'ir, B> = Option<
 >;
 
 pub type Backtrace = Vec<(Name, usize)>;
-pub fn backtrace_to_string<'ir, B>(bt: &Backtrace, shared_state: &SharedState<'ir, B>) -> String {
+pub fn backtrace_to_string<'ir, B: BV>(bt: &Backtrace, shared_state: &SharedState<'ir, B>) -> String {
     let mut stacktrace = String::new();
     for (name, num) in bt {
         stacktrace.push_str(&format!("    {} ({})\n", &shared_state.symtab.to_str(*name), num));
@@ -428,7 +428,7 @@ pub fn backtrace_to_string<'ir, B>(bt: &Backtrace, shared_state: &SharedState<'i
 /// A `Frame` is an immutable snapshot of the program state while it
 /// is being symbolically executed.
 #[derive(Clone)]
-pub struct Frame<'ir, B> {
+pub struct Frame<'ir, B: BV> {
     pub function_name: Name,
     pc: usize,
     forks: u32,
@@ -444,7 +444,7 @@ pub struct Frame<'ir, B> {
 /// A `LocalFrame` is a mutable frame which is used by a currently
 /// executing thread. It is turned into an immutable `Frame` when the
 /// control flow forks on a choice, which can be shared by threads.
-pub struct LocalFrame<'ir, B> {
+pub struct LocalFrame<'ir, B: BV> {
     pub function_name: Name,
     pub pc: usize,
     forks: u32,
@@ -1059,7 +1059,7 @@ pub type Collector<'ir, B, R> = dyn 'ir
 /// program variables, a checkpoint which allows us to reconstruct the
 /// SMT solver state, and finally an option SMTLIB definiton which is
 /// added to the solver state when the task is resumed.
-pub struct Task<'ir, 'task, B> {
+pub struct Task<'ir, 'task, B: BV> {
     pub id: usize,
     pub frame: Frame<'ir, B>,
     pub checkpoint: Checkpoint<B>,
@@ -1067,7 +1067,7 @@ pub struct Task<'ir, 'task, B> {
     pub stop_functions: Option<&'task HashSet<Name>>,
 }
 
-impl<'ir, 'task, B> Task<'ir, 'task, B> {
+impl<'ir, 'task, B: BV> Task<'ir, 'task, B> {
     pub fn set_stop_functions(&mut self, new_fns: &'task HashSet<Name>) {
         self.stop_functions = Some(new_fns);
     }
