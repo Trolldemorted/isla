@@ -680,11 +680,6 @@ fn run_loop<'ir, 'task, B: BV>(
     shared_state: &SharedState<'ir, B>,
     solver: &mut Solver<B>,
 ) -> Result<Val<B>, ExecError> {
-    //println!("run_loop");
-    //let x1 = shared_state.symtab.get("z_PC").unwrap();
-    //println!("z_PC={:?}", frame.regs().get(&x1));
-    //let fname = shared_state.symtab.to_str(frame.function_name);
-    //println!("{:?}", &fname);
 
     loop {
         if frame.pc >= frame.instrs.len() {
@@ -726,16 +721,21 @@ fn run_loop<'ir, 'task, B: BV>(
                         let can_be_false = solver.check_sat_with(&test_false).is_sat()?;
 
                         if can_be_true && can_be_false {
-                            println!("forking ({:?} can be true and false) at:", exp);
+                            println!("forking at jump ({:?}", exp);
+                            println!("vars:");
                             println!("{:?}", frame.local_state.print_vars(shared_state));
+                            println!("regs:");
+                            for (reg_name, reg_val) in &frame.local_state.regs {
+                                println!("{:?}={:?}", shared_state.symtab.to_str(*reg_name), reg_val)
+                            }
 
                             match exp {
-                                Exp::Id(name) => println!("{}", shared_state.symtab.to_str(*name)),
+                                Exp::Id(name) => println!("exp: {}", shared_state.symtab.to_str(*name)),
                                 _ => panic!()
                             }
-                            println!("{}", shared_state.symtab.to_str(frame.function_name));
-                            println!("{}", backtrace_to_string(&frame.backtrace, shared_state));
-                            panic!();
+                            println!("function name: {}", shared_state.symtab.to_str(frame.function_name));
+                            println!("backtrace: {}", backtrace_to_string(&frame.backtrace, shared_state));
+                            //panic!();
 
                             // Trace which asserts are assocated with each fork in the trace, so we
                             // can turn a set of traces into a tree later

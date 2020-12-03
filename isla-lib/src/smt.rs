@@ -50,6 +50,7 @@ use std::io::Write;
 use std::mem;
 use std::ptr;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::concrete::BV;
 use crate::error::ExecError;
@@ -1536,9 +1537,11 @@ impl<'ctx, B: BV> Solver<'ctx, B> {
     }
 
     pub fn from_checkpoint(ctx: &'ctx Context, Checkpoint { num, next_var, trace }: Checkpoint<B>) -> Self {
+        let now = Instant::now();
         let mut solver = Solver::new(ctx);
         solver.replay(num, trace);
         solver.next_var = next_var;
+        println!("from_checkpoint took {}", now.elapsed().as_millis());
         solver
     }
 

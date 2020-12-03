@@ -38,3 +38,6 @@ path = "src/test.rs"
 [[bin]]
 name = "test2"
 path = "src/test2.rs"
+
+[profile.release]
+debug = true

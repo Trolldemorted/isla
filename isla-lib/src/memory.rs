@@ -325,7 +325,7 @@ impl<B: BV> Memory<B> {
         solver: &mut Solver<B>,
         tag: bool,
     ) -> Result<Val<B>, ExecError> {
-        log!(log::MEMORY, &format!("Read: {:?} {:?} {:?} {:?}", read_kind, address, bytes, tag));
+        log!(log::MEMORY, &format!("Read: {:?} {:?} {:?} {:?}", &read_kind, address, bytes, tag));
 
         if let Val::I128(bytes) = bytes {
             let bytes = u32::try_from(bytes).expect("Bytes did not fit in u32 in memory read");
@@ -663,44 +663,64 @@ fn read_concrete<B: BV>(
 
 fn read_stable<B: BV>(
     region: &HashMap<Address, Val<B>>,
-    read_kind: Val<B>,
+    read_kind: &Val<B>,
     address: Address,
     bytes: u32,
     solver: &mut Solver<B>,
     tag: bool,
 ) -> Result<Val<B>, ExecError> {
+    let bit_len = bytes * 8;
+    println!("MEMREAD foo = [{:#018X}]", address);
     if let Some(read) = region.get(&address) {
+        // Direct match!
         match read {
             Val::Bits(b) => {
-                if b.len() < bytes {
-                    // The saved Val is too small
-                    unimplemented!()
+                if b.len() < bit_len {
+                    // The saved Val is not big enough
+                    // TODO: properly constrain the symbol to have the lower bits constrained
+                    let value = solver.fresh();
+                    solver.add(Def::DeclareConst(value, Ty::BitVec(8 * bytes)));
+                    Ok(Val::Symbolic(value))
                 }
-                else if b.len() == bytes {
+                else if b.len() == bit_len {
                     Ok(Val::Bits(*b))
                 } else {
                     // The saved Val is too big
-                    Ok(Val::Bits(b.slice(0, bytes * 8).unwrap()))
+                    Ok(Val::Bits(b.slice(0, bit_len).unwrap()))
                 }
             },
-            Val::Symbolic(s) => { //TODO do it properly: the accessed memory region may spread across multiple symbols
-                Ok(Val::Symbolic(*s))
+            Val::Symbolic(s) => {
+                //TODO do it properly: the accessed memory region may partially spread across multiple Vals
+                let value = solver.fresh();
+                solver.add(Def::DeclareConst(value, Ty::BitVec(8 * bytes)));
+                Ok(Val::Symbolic(value))
             },
             _ => Err(ExecError::BadRead)
         }
     } else {
-        // Val was not stored directly, but could be a subset of a Val to the left
-        let left = read_stable(region, read_kind, address - 1, bytes + 1, solver, tag)?;
-        match left {
-            Val::Bits(b) => {
-                if b.len() + 8 < bytes * 8 {
-                    unimplemented!()
-                } else {
-                    assert!(b.len() >= (bytes * 8) + 8);
-                    Ok(Val::Bits(b.slice(8, bytes * 8).unwrap()))
-                } 
-            },
-            _ => unimplemented!()
+        // Nothing found, but there could be a wider value to the left
+        for i in 1..7 {
+            if let Some(left) = region.get(&(address - i)) {
+                let overlap_bit_width: u32 = 8 * i as u32;
+                match left {
+                    Val::Bits(b) => {
+                        if b.len() + overlap_bit_width < bit_len {
+                            // Value is not big enough
+                            unimplemented!()
+                        } else {
+                            assert!(b.len() >= bit_len + 8);
+                            return Ok(Val::Bits(b.slice(overlap_bit_width, bit_len).unwrap()))
+                        } 
+                    },
+                    _ => unimplemented!()
+                }
+            }
         }
+
+        // Nothing to the left, so let's return a new symbol
+        let value = solver.fresh();
+        solver.add(Def::DeclareConst(value, Ty::BitVec(bit_len)));
+        //region.insert(address, Val::Symbolic(value));
+        Ok(Val::Symbolic(value))
     }
 }

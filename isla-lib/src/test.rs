@@ -28,11 +28,36 @@ use isla_lib::elf_loader;
 use isla_lib::ir::UVal;
 use crossbeam::queue::SegQueue;
 
+fn step_until<'ir, 'task, B: BV>(
+    mut tasks: Vec<isla_lib::executor::Task<'ir, 'task, B>>,
+    shared_state: &isla_lib::ir::SharedState<'ir, B>,
+    stops: &[u64]
+) {
+    let mut finished = vec![];
+    let mut steps = 0;
+    while tasks.len() > 0 {
+        let task = tasks.remove(tasks.len() -1);
+        steps += 1;
+        println!("stepping {}", steps);
+        let mut succs = step(task, shared_state);
+        while succs.len() > 0 {
+            let succ = succs.remove(succs.len() - 1);
+            if stops.contains(&read_register(&succ.frame, &shared_state.symtab, "z_PC"))  {
+                println!("### task finished!");
+                finished.push(succ)
+            } else {
+                tasks.push(succ)
+            }
+        }
+    }
+}
 
 fn step<'ir, 'task, B: BV>(
     task: isla_lib::executor::Task<'ir, 'task, B>,
     shared_state: &isla_lib::ir::SharedState<'ir, B>) -> Vec<executor::Task<'ir, 'task, B>> {
     println!("--------------- begin step -----------------------------");
+    let now = Instant::now();
+    //print_registers(&task.frame, &shared_state.symtab);
     let queue = Arc::new(SegQueue::new());
     executor::start_multi(
         1,
@@ -48,6 +73,8 @@ fn step<'ir, 'task, B: BV>(
             Ok(Ok((mut local_frame, checkpoint))) => {
                 local_frame.pc = 0;
                 let frame = executor::freeze_frame(&local_frame);
+                println!("new z_PC:");
+                print_register(&frame, &shared_state.symtab, "z_PC");
                 successors.push(executor::Task {
                     id: 42,
                     frame: frame,
@@ -65,6 +92,7 @@ fn step<'ir, 'task, B: BV>(
             }
         }
     }
+    println!("step took {}", now.elapsed().as_millis());
     println!("--------------- end step -------------------------------");
     //println!("{:?}", &queue);
     successors
@@ -98,10 +126,11 @@ fn main() {
     lf.add_lets(&lets);
     lf.add_regs(&regs);
     let mem = lf.memory_mut();
-    elf_loader::load_elf("./router", mem);
+    elf_loader::load_elf("./router4", mem);
     mem.add_stable_region(0x1000..0xffff, HashMap::new());              // stack
     mem.add_symbolic_region(0x000000000a003e00..0x000000000b000000);    // virtio device
     mem.add_symbolic_region(0x46000000..0x47000000);                    // "heap"
+    
     
     let mut task = lf.task(0);
     print_register(&task.frame, &shared_state.symtab, "zPSTATE");
@@ -112,25 +141,24 @@ fn main() {
     // prepare os emulation
     log::set_flags(0xffffffff);
     let mut lf = executor::unfreeze_frame(&task.frame);
-    lf.regs_mut().insert(shared_state.symtab.lookup("z_PC"), UVal::Init(Val::Bits(B64::from_u64(0x0000000000215f38))));
+    //lf.regs_mut().insert(shared_state.symtab.lookup("z_PC"), UVal::Init(Val::Bits(B64::from_u64(0x0000000000215f38)))); // router
+    //lf.regs_mut().insert(shared_state.symtab.lookup("z_PC"), UVal::Init(Val::Bits(B64::from_u64(0x0000000000211924)))); // router2
+    //lf.regs_mut().insert(shared_state.symtab.lookup("z_PC"), UVal::Init(Val::Bits(B64::from_u64(0x00000000002116E4)))); // router3
+    lf.regs_mut().insert(shared_state.symtab.lookup("z_PC"), UVal::Init(Val::Bits(B64::from_u64(0x0000000000211420)))); // router4
     lf.function_name = step_function_id;
     lf.instrs = step_instrs;
     init::reinitialize_registers_arm64(lf.regs_mut(), &shared_state);
+    // wat
+
     task.frame = executor::freeze_frame(&lf);
 
     // go!
+    let steps = vec![
+        //0x2117A4, // B at the end of main loop
+        0x21141C // panic handler
+    ];
     println!("starting execution");
-    loop {
-        task = execute_sail_function_no_fork(task, &shared_state);
-        //print_registers(&task.frame, &shared_state.symtab);
-        println!("{:?}", &task.checkpoint.num);
-        print_register(&task.frame, &shared_state.symtab, "z_PC");
-        print_register(&task.frame, &shared_state.symtab, "zR30");
-        print_register(&task.frame, &shared_state.symtab, "zSP_EL3");
-        print_register(&task.frame, &shared_state.symtab, "zSP_EL2");
-        print_register(&task.frame, &shared_state.symtab, "zSP_EL1");
-        print_register(&task.frame, &shared_state.symtab, "zSP_EL0");
-    }
+    step_until(vec![task], &shared_state, &steps);
 }
 
 fn execute_sail_function_no_fork<'ir, 'task, B: BV>(task: executor::Task<'ir, 'task, B>, shared_state: &SharedState<'ir, B>) -> executor::Task<'ir, 'task, B> {
@@ -153,9 +181,10 @@ fn print_register<'ir, B: BV>(frame: &Frame<'ir, B>, symtab: &Symtab, name: &str
             }
             println!("{}", &buf);
         },
-        other => panic!("{} is not bits: {:?}", name, other)
+        other => println!("{}={:?}", name, other)
     }
 }
+
 
 fn read_register<'ir, B: BV>(frame: &Frame<'ir, B>, symtab: &Symtab, name:&str) -> u64 {
     let x1 = symtab.get(name).unwrap();
@@ -167,8 +196,11 @@ fn read_register<'ir, B: BV>(frame: &Frame<'ir, B>, symtab: &Symtab, name:&str) 
 }
 
 fn print_registers<'ir, B: BV>(frame: &Frame<'ir, B>, symtab: &Symtab) {
-    for (reg_name, reg_val) in &frame.local_state.regs {
-        println!("{:?}={:?}", symtab.to_str(*reg_name), reg_val)
+    for (reg_name, _reg_val) in &frame.local_state.regs {
+        let name = symtab.to_str(*reg_name);
+        if name.starts_with("_z_PC") || name.starts_with("zR") || name == "zPSTATE" {
+            print_register(frame, symtab, name)
+        }
     }
 }
 
