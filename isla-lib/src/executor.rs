@@ -145,7 +145,7 @@ fn get_and_initialize<'ir, B: BV>(
         Some(UVal::Uninit(ty)) => {
             let name = shared_state.symtab.to_str(v);
             if !name.starts_with("zg") {
-                println!("get_and_initialize uninit {}", shared_state.symtab.to_str(v));
+                // println!("get_and_initialize uninit {}", shared_state.symtab.to_str(v));
             }
             let sym = symbolic(ty, shared_state, solver)?;
             vars.insert(v, UVal::Init(sym.clone()));
@@ -203,7 +203,7 @@ fn get_loc_and_initialize<'ir, B: BV>(
             if let Val::Struct(members) = get_loc_and_initialize(loc, local_state, shared_state, solver, accessor)? {
                 match members.get(field) {
                     Some(field_value) => field_value.clone(),
-                    None => panic!("No field {:?}", shared_state.symtab.to_str(*field)),
+                    None => panic!("No field {:?} , accessor={:?}", shared_state.symtab.to_str(*field), accessor),
                 }
             } else {
                 panic!("Struct expression did not evaluate to a struct")
@@ -295,7 +295,7 @@ fn eval_exp_with_accessor<'ir, B: BV>(
             {
                 match struct_value.get(field) {
                     Some(field_value) => field_value.clone(),
-                    None => panic!("No field {:?}", shared_state.symtab.to_str(*field)),
+                    None => panic!("No field {:?}, accessor ={:?}", shared_state.symtab.to_str(*field), field),
                 }
             } else {
                 panic!("Struct expression did not evaluate to a struct")
@@ -682,6 +682,8 @@ fn run_loop<'ir, 'task, B: BV>(
 ) -> Result<Val<B>, ExecError> {
 
     loop {
+        //println!("function name: {}", shared_state.symtab.to_str(frame.function_name));
+        //println!("backtrace: {}", backtrace_to_string(&frame.backtrace, shared_state));
         if frame.pc >= frame.instrs.len() {
             // Currently this happens when evaluating letbindings.
             log_from!(tid, log::VERBOSE, "Fell from end of instruction list");
@@ -721,6 +723,7 @@ fn run_loop<'ir, 'task, B: BV>(
                         let can_be_false = solver.check_sat_with(&test_false).is_sat()?;
 
                         if can_be_true && can_be_false {
+                            panic!();
                             println!("forking at jump ({:?}", exp);
                             println!("vars:");
                             println!("{:?}", frame.local_state.print_vars(shared_state));

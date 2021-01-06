@@ -311,8 +311,8 @@ use smtlib::*;
 #[derive(Clone, Default, Debug)]
 pub struct Checkpoint<B> {
     pub num: usize,
-    next_var: u32,
-    trace: Arc<Option<Trace<B>>>,
+    pub next_var: u32,
+    pub trace: Arc<Option<Trace<B>>>,
 }
 
 impl<B> Checkpoint<B> {
@@ -494,9 +494,9 @@ pub type EvPath<B> = Vec<Event<B>>;
 /// checkpoints can be created and shared.
 #[derive(Debug)]
 pub struct Trace<B> {
-    checkpoints: usize,
-    head: Vec<Event<B>>,
-    tail: Arc<Option<Trace<B>>>,
+    pub checkpoints: usize,
+    pub head: Vec<Event<B>>,
+    pub tail: Arc<Option<Trace<B>>>,
 }
 
 impl<B: BV> Trace<B> {
@@ -1537,11 +1537,9 @@ impl<'ctx, B: BV> Solver<'ctx, B> {
     }
 
     pub fn from_checkpoint(ctx: &'ctx Context, Checkpoint { num, next_var, trace }: Checkpoint<B>) -> Self {
-        let now = Instant::now();
         let mut solver = Solver::new(ctx);
         solver.replay(num, trace);
         solver.next_var = next_var;
-        println!("from_checkpoint took {}", now.elapsed().as_millis());
         solver
     }
 

@@ -1844,11 +1844,11 @@ fn choice<B: BV>(xs: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>, ExecError
 }
 
 fn read_mem<B: BV>(args: Vec<Val<B>>, solver: &mut Solver<B>, frame: &mut LocalFrame<B>) -> Result<Val<B>, ExecError> {
-    frame.memory().read(args[0].clone(), args[2].clone(), args[3].clone(), solver, false)
+    frame.memory_mut().read(args[0].clone(), args[2].clone(), args[3].clone(), solver, false)
 }
 
 fn read_memt<B: BV>(args: Vec<Val<B>>, solver: &mut Solver<B>, frame: &mut LocalFrame<B>) -> Result<Val<B>, ExecError> {
-    frame.memory().read(args[0].clone(), args[1].clone(), args[2].clone(), solver, true)
+    frame.memory_mut().read(args[0].clone(), args[1].clone(), args[2].clone(), solver, true)
 }
 
 fn bad_read<B: BV>(_: Val<B>, _: &mut Solver<B>) -> Result<Val<B>, ExecError> {

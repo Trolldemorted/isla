@@ -57,3 +57,4 @@ pub mod smt;
 pub mod type_check;
 pub mod zencode;
 pub mod elf_loader;
+pub mod stable_memory;

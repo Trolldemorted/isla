@@ -53,9 +53,9 @@ use crate::smt::{Event, SmtResult, Solver, Sym};
 /// For now, we assume that we only deal with 64-bit architectures.
 pub type Address = u64;
 
-pub trait CustomRegion<B> {
+pub trait CustomRegion<B> : Send + Sync {
     fn read(
-        &self,
+        &mut self,
         read_kind: Val<B>,
         address: Address,
         bytes: u32,
@@ -116,7 +116,7 @@ pub enum SmtKind {
     WriteData,
 }
 
-impl<B: BV> fmt::Debug for Region<B> {
+impl<B> fmt::Debug for Region<B> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Region::*;
         match self {
@@ -199,7 +199,7 @@ fn make_bv_bit_pair<B>(left: Val<B>, right: Val<B>) -> Val<B> {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct Memory<B: BV> {
+pub struct Memory<B> {
     regions: Vec<Region<B>>,
     client_info: Option<Box<dyn MemoryCallbacks<B>>>,
 }
@@ -255,10 +255,6 @@ impl<B: BV> Memory<B> {
 
     pub fn add_concrete_region(&mut self, range: Range<Address>, contents: HashMap<Address, u8>) {
         self.regions.push(Region::Concrete(range, contents))
-    }
-
-    pub fn add_stable_region(&mut self, range: Range<Address>, contents: HashMap<Address, Val<B>>) {
-        self.regions.push(Region::Stable(range, contents))
     }
 
     pub fn add_zero_region(&mut self, range: Range<Address>) {
@@ -318,21 +314,21 @@ impl<B: BV> Memory<B> {
     /// Panics if the number of bytes to read is concrete but does not fit
     /// in a u32, which should never be the case.
     pub fn read(
-        &self,
+        &mut self,
         read_kind: Val<B>,
         address: Val<B>,
         bytes: Val<B>,
         solver: &mut Solver<B>,
         tag: bool,
     ) -> Result<Val<B>, ExecError> {
-        log!(log::MEMORY, &format!("Read: {:?} {:?} {:?} {:?}", &read_kind, address, bytes, tag));
+        log!(log::MEMORY, &format!("Read: {:?} {:?} {:?} {:?}", read_kind, address, bytes, tag));
 
         if let Val::I128(bytes) = bytes {
             let bytes = u32::try_from(bytes).expect("Bytes did not fit in u32 in memory read");
 
             match address {
                 Val::Bits(concrete_addr) => {
-                    for region in &self.regions {
+                    for region in &mut self.regions {
                         match region {
                             Region::Constrained(range, generator) if range.contains(&concrete_addr.lower_u64()) => {
                                 return read_constrained(
@@ -505,7 +501,8 @@ impl<B: BV> Memory<B> {
             None => (),
         };
         solver.add_event(Event::WriteMem { value, write_kind, address, data, bytes, tag_value: tag });
-        Ok(Val::Unit)
+
+        Ok(Val::Symbolic(value))
     }
 
     pub fn smt_address_constraint(
@@ -640,7 +637,7 @@ fn read_concrete<B: BV>(
     reverse_endianness(&mut byte_vec);
 
     if byte_vec.len() <= 8 {
-        log!(log::MEMORY, &format!("Read concrete ({:#018X}): {:?}", address, byte_vec));
+        log!(log::MEMORY, &format!("Read concrete: {:?}", byte_vec));
 
         let value = Val::Bits(B::from_bytes(&byte_vec));
         solver.add_event(Event::ReadMem {
@@ -658,69 +655,5 @@ fn read_concrete<B: BV>(
     } else {
         // TODO: Handle reads > 64 bits
         Err(ExecError::BadRead)
-    }
-}
-
-fn read_stable<B: BV>(
-    region: &HashMap<Address, Val<B>>,
-    read_kind: &Val<B>,
-    address: Address,
-    bytes: u32,
-    solver: &mut Solver<B>,
-    tag: bool,
-) -> Result<Val<B>, ExecError> {
-    let bit_len = bytes * 8;
-    println!("MEMREAD foo = [{:#018X}]", address);
-    if let Some(read) = region.get(&address) {
-        // Direct match!
-        match read {
-            Val::Bits(b) => {
-                if b.len() < bit_len {
-                    // The saved Val is not big enough
-                    // TODO: properly constrain the symbol to have the lower bits constrained
-                    let value = solver.fresh();
-                    solver.add(Def::DeclareConst(value, Ty::BitVec(8 * bytes)));
-                    Ok(Val::Symbolic(value))
-                }
-                else if b.len() == bit_len {
-                    Ok(Val::Bits(*b))
-                } else {
-                    // The saved Val is too big
-                    Ok(Val::Bits(b.slice(0, bit_len).unwrap()))
-                }
-            },
-            Val::Symbolic(s) => {
-                //TODO do it properly: the accessed memory region may partially spread across multiple Vals
-                let value = solver.fresh();
-                solver.add(Def::DeclareConst(value, Ty::BitVec(8 * bytes)));
-                Ok(Val::Symbolic(value))
-            },
-            _ => Err(ExecError::BadRead)
-        }
-    } else {
-        // Nothing found, but there could be a wider value to the left
-        for i in 1..7 {
-            if let Some(left) = region.get(&(address - i)) {
-                let overlap_bit_width: u32 = 8 * i as u32;
-                match left {
-                    Val::Bits(b) => {
-                        if b.len() + overlap_bit_width < bit_len {
-                            // Value is not big enough
-                            unimplemented!()
-                        } else {
-                            assert!(b.len() >= bit_len + 8);
-                            return Ok(Val::Bits(b.slice(overlap_bit_width, bit_len).unwrap()))
-                        } 
-                    },
-                    _ => unimplemented!()
-                }
-            }
-        }
-
-        // Nothing to the left, so let's return a new symbol
-        let value = solver.fresh();
-        solver.add(Def::DeclareConst(value, Ty::BitVec(bit_len)));
-        //region.insert(address, Val::Symbolic(value));
-        Ok(Val::Symbolic(value))
     }
 }

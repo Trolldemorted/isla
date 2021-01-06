@@ -26,6 +26,8 @@ use isla_lib::log;
 use isla_lib::executor::Backtrace;
 use isla_lib::elf_loader;
 use isla_lib::ir::UVal;
+use isla_lib::stable_memory::StableMemoryRegion;
+use isla_lib::memory::Region;
 use crossbeam::queue::SegQueue;
 
 fn step_until<'ir, 'task, B: BV>(
@@ -125,11 +127,14 @@ fn main() {
     let mut lf: LocalFrame<B64> = LocalFrame::new(reset_function_id, reset_args, Some(&vals), reset_instrs);
     lf.add_lets(&lets);
     lf.add_regs(&regs);
+    /*
     let mem = lf.memory_mut();
     elf_loader::load_elf("./router4", mem);
-    mem.add_stable_region(0x1000..0xffff, HashMap::new());              // stack
-    mem.add_symbolic_region(0x000000000a003e00..0x000000000b000000);    // virtio device
-    mem.add_symbolic_region(0x46000000..0x47000000);                    // "heap"
+    mem.add_region(Region::Custom(0x1000..0xffff, Box::new(StableMemoryRegion::new())));  // stack
+    //mem.add_stable_region(0x1000..0xffff, HashMap::new());              // stack
+    mem.add_symbolic_region(0x000000000a003e00..0x000000000b000000);            // virtio device
+    mem.add_symbolic_region(0x46000000..0x47000000);                            // "heap"
+     */
     
     
     let mut task = lf.task(0);
@@ -137,6 +142,8 @@ fn main() {
 
     // cold reset device (TakeReset(true))
     task = execute_sail_function_no_fork(task, &shared_state);
+    print_register(&task.frame, &shared_state.symtab, "zPSTATE");
+    return
 
     // prepare os emulation
     log::set_flags(0xffffffff);
@@ -154,7 +161,7 @@ fn main() {
 
     // go!
     let steps = vec![
-        //0x2117A4, // B at the end of main loop
+        0x2117A4, // B at the end of main loop
         0x21141C // panic handler
     ];
     println!("starting execution");
@@ -177,7 +184,7 @@ fn print_register<'ir, B: BV>(frame: &Frame<'ir, B>, symtab: &Symtab, name: &str
         UVal::Init(Val::Struct(s)) => {
             let mut buf = format!("{}=\n", name);
             for (k, v) in s.iter() {
-                buf.push_str(&format!("    .{} = {:?}\n", &symtab.to_str(*k), v));
+                buf.push_str(&format!("    .{} ({:?}) = {:?}\n", &symtab.to_str(*k), *k, v));
             }
             println!("{}", &buf);
         },
