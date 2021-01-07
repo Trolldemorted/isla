@@ -369,6 +369,7 @@ impl<B: BV> Memory<B> {
                         }
                     }
 
+                    println!("[WARNING] symbolic read from concrete address {:016x}", concrete_addr);
                     self.read_symbolic(read_kind, address, bytes, solver, tag)
                 }
 
@@ -406,6 +407,7 @@ impl<B: BV> Memory<B> {
                     }
                 }
 
+                println!("[WARNING] symbolic write to concrete address {:016x}", concrete_addr);
                 self.write_symbolic(write_kind, address, data, solver, tag)
             }
 

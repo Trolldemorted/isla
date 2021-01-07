@@ -52,7 +52,7 @@ use std::ptr;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::concrete::BV;
+use crate::{concrete::BV, memory::Address};
 use crate::error::ExecError;
 use crate::ir::{EnumMember, Name, Symtab, Val};
 use crate::zencode;
