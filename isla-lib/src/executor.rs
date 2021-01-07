@@ -58,7 +58,11 @@ use crate::zencode;
 /// ideal because SMT solvers don't allow zero-length bitvectors). Compound types like structs will
 /// be a concrete structure with symbolic values for each field. Returns the `NoSymbolicType` error
 /// if the type cannot be represented in the SMT solver.
-pub fn symbolic<B: BV>(ty: &Ty<Name>, shared_state: &SharedState<B>, solver: &mut Solver<B>) -> Result<Val<B>, ExecError> {
+pub fn symbolic<B: BV>(
+    ty: &Ty<Name>,
+    shared_state: &SharedState<B>,
+    solver: &mut Solver<B>,
+) -> Result<Val<B>, ExecError> {
     let smt_ty = match ty {
         Ty::Unit => return Ok(Val::Unit),
         Ty::Bits(0) => return Ok(Val::Bits(B::zeros(0))),
@@ -105,10 +109,18 @@ pub fn symbolic<B: BV>(ty: &Ty<Name>, shared_state: &SharedState<B>, solver: &mu
 }
 
 #[derive(Clone)]
-struct LocalState<'ir, B> {
+pub struct LocalState<'ir, B> {
     vars: Bindings<'ir, B>,
-    regs: Bindings<'ir, B>,
+    pub regs: Bindings<'ir, B>,
     lets: Bindings<'ir, B>,
+}
+
+impl<'ir, B: BV> LocalState<'ir, B> {
+    fn print_vars(&self, shared_state: &SharedState<B>) {
+        for (k, v) in &self.vars {
+            println!("{} = {:?}", shared_state.symtab.to_str(*k), v)
+        }
+    }
 }
 
 /// Gets a value from a variable `Bindings` map. Note that this function is set up to handle the
@@ -131,6 +143,10 @@ fn get_and_initialize<'ir, B: BV>(
 ) -> Result<Option<Val<B>>, ExecError> {
     Ok(match vars.get(&v) {
         Some(UVal::Uninit(ty)) => {
+            let name = shared_state.symtab.to_str(v);
+            if !name.starts_with("zg") {
+                // println!("get_and_initialize uninit {}", shared_state.symtab.to_str(v));
+            }
             let sym = symbolic(ty, shared_state, solver)?;
             vars.insert(v, UVal::Init(sym.clone()));
             Some(sym)
@@ -187,7 +203,7 @@ fn get_loc_and_initialize<'ir, B: BV>(
             if let Val::Struct(members) = get_loc_and_initialize(loc, local_state, shared_state, solver, accessor)? {
                 match members.get(field) {
                     Some(field_value) => field_value.clone(),
-                    None => panic!("No field"),
+                    None => panic!("No field {:?} , accessor={:?}", shared_state.symtab.to_str(*field), accessor),
                 }
             } else {
                 panic!("Struct expression did not evaluate to a struct")
@@ -255,7 +271,7 @@ fn eval_exp_with_accessor<'ir, B: BV>(
             let v = eval_exp(exp, local_state, shared_state, solver)?;
             match v {
                 Val::Ctor(ctor_b, _) => Val::Bool(*ctor_a != ctor_b),
-                _ => return Err(ExecError::Type("Kind check on non-constructor")),
+                _ => return Err(ExecError::Type(format!("Kind check on non-constructor {:?}", &v))),
             }
         }
 
@@ -266,10 +282,10 @@ fn eval_exp_with_accessor<'ir, B: BV>(
                     if *ctor_a == ctor_b {
                         *v
                     } else {
-                        return Err(ExecError::Type("Constructors did not match in unwrap"));
+                        return Err(ExecError::Type(format!("Constructors did not match in unwrap {:?}", &v)));
                     }
                 }
-                _ => return Err(ExecError::Type("Tried to unwrap non-constructor")),
+                _ => return Err(ExecError::Type(format!("Tried to unwrap non-constructor {:?}", &v))),
             }
         }
 
@@ -279,7 +295,7 @@ fn eval_exp_with_accessor<'ir, B: BV>(
             {
                 match struct_value.get(field) {
                     Some(field_value) => field_value.clone(),
-                    None => panic!("No field"),
+                    None => panic!("No field {:?}, accessor ={:?}", shared_state.symtab.to_str(*field), field),
                 }
             } else {
                 panic!("Struct expression did not evaluate to a struct")
@@ -400,16 +416,24 @@ type Stack<'ir, B> = Option<
     >,
 >;
 
-type Backtrace = Vec<(Name, usize)>;
+pub type Backtrace = Vec<(Name, usize)>;
+pub fn backtrace_to_string<'ir, B: BV>(bt: &Backtrace, shared_state: &SharedState<'ir, B>) -> String {
+    let mut stacktrace = String::new();
+    for (name, num) in bt {
+        stacktrace.push_str(&format!("    {} ({})\n", &shared_state.symtab.to_str(*name), num));
+    }
+    stacktrace
+}
 
 /// A `Frame` is an immutable snapshot of the program state while it
 /// is being symbolically executed.
-pub struct Frame<'ir, B> {
-    function_name: Name,
+#[derive(Clone)]
+pub struct Frame<'ir, B: BV> {
+    pub function_name: Name,
     pc: usize,
     forks: u32,
     backjumps: u32,
-    local_state: Arc<LocalState<'ir, B>>,
+    pub local_state: Arc<LocalState<'ir, B>>,
     memory: Arc<Memory<B>>,
     instrs: &'ir [Instr<Name, B>],
     stack_vars: Arc<Vec<Bindings<'ir, B>>>,
@@ -420,14 +444,14 @@ pub struct Frame<'ir, B> {
 /// A `LocalFrame` is a mutable frame which is used by a currently
 /// executing thread. It is turned into an immutable `Frame` when the
 /// control flow forks on a choice, which can be shared by threads.
-pub struct LocalFrame<'ir, B> {
-    function_name: Name,
-    pc: usize,
+pub struct LocalFrame<'ir, B: BV> {
+    pub function_name: Name,
+    pub pc: usize,
     forks: u32,
     backjumps: u32,
     local_state: LocalState<'ir, B>,
     memory: Memory<B>,
-    instrs: &'ir [Instr<Name, B>],
+    pub instrs: &'ir [Instr<Name, B>],
     stack_vars: Vec<Bindings<'ir, B>>,
     stack_call: Stack<'ir, B>,
     backtrace: Backtrace,
@@ -656,7 +680,10 @@ fn run_loop<'ir, 'task, B: BV>(
     shared_state: &SharedState<'ir, B>,
     solver: &mut Solver<B>,
 ) -> Result<Val<B>, ExecError> {
+
     loop {
+        //println!("function name: {}", shared_state.symtab.to_str(frame.function_name));
+        //println!("backtrace: {}", backtrace_to_string(&frame.backtrace, shared_state));
         if frame.pc >= frame.instrs.len() {
             // Currently this happens when evaluating letbindings.
             log_from!(tid, log::VERBOSE, "Fell from end of instruction list");
@@ -666,6 +693,8 @@ fn run_loop<'ir, 'task, B: BV>(
         if timeout.timed_out() {
             return Err(ExecError::Timeout);
         }
+
+        //println!("executing {:?}", &frame.instrs[frame.pc]);
 
         match &frame.instrs[frame.pc] {
             Instr::Decl(v, ty) => {
@@ -694,6 +723,23 @@ fn run_loop<'ir, 'task, B: BV>(
                         let can_be_false = solver.check_sat_with(&test_false).is_sat()?;
 
                         if can_be_true && can_be_false {
+                            panic!();
+                            println!("forking at jump ({:?}", exp);
+                            println!("vars:");
+                            println!("{:?}", frame.local_state.print_vars(shared_state));
+                            println!("regs:");
+                            for (reg_name, reg_val) in &frame.local_state.regs {
+                                println!("{:?}={:?}", shared_state.symtab.to_str(*reg_name), reg_val)
+                            }
+
+                            match exp {
+                                Exp::Id(name) => println!("exp: {}", shared_state.symtab.to_str(*name)),
+                                _ => panic!()
+                            }
+                            println!("function name: {}", shared_state.symtab.to_str(frame.function_name));
+                            println!("backtrace: {}", backtrace_to_string(&frame.backtrace, shared_state));
+                            //panic!();
+
                             // Trace which asserts are assocated with each fork in the trace, so we
                             // can turn a set of traces into a tree later
                             log_from!(tid, log::FORK, loc);
@@ -729,7 +775,7 @@ fn run_loop<'ir, 'task, B: BV>(
                         }
                     }
                     _ => {
-                        return Err(ExecError::Type("Jump on non boolean"));
+                        return Err(ExecError::Type(format!("Jump on non boolean {:?}", &value)));
                     }
                 }
             }
@@ -768,6 +814,7 @@ fn run_loop<'ir, 'task, B: BV>(
             }
 
             Instr::Call(loc, _, f, args) => {
+                //println!("Call {}", shared_state.symtab.to_str(*f));
                 if let Some(s) = stop_functions {
                     if s.contains(f) {
                         let symbol = zencode::decode(shared_state.symtab.to_str(*f));
@@ -789,12 +836,18 @@ fn run_loop<'ir, 'task, B: BV>(
                                         shared_state,
                                         solver,
                                     )?,
-                                    _ => return Err(ExecError::Type("internal_vector_init")),
+                                    _ => return Err(ExecError::Type(format!("internal_vector_init {:?}", &loc))),
                                 },
-                                _ => return Err(ExecError::Type("internal_vector_init")),
+                                _ => return Err(ExecError::Type(format!("internal_vector_init {:?}", &loc))),
                             };
                             frame.pc += 1
-                        } else if *f == INTERNAL_VECTOR_UPDATE {
+                        } else if *f == INTERNAL_VECTOR_UPDATE && args.len() == 3 {
+                            let args = args
+                                .iter()
+                                .map(|arg| eval_exp(arg, &mut frame.local_state, shared_state, solver))
+                                .collect::<Result<Vec<Val<B>>, _>>()?;
+                            let vector = primop::vector_update(args, solver, frame)?;
+                            assign(tid, loc, vector, &mut frame.local_state, shared_state, solver)?;
                             frame.pc += 1
                         } else if *f == SAIL_EXIT {
                             return Err(ExecError::Exit);
@@ -805,10 +858,10 @@ fn run_loop<'ir, 'task, B: BV>(
                                         solver.add_event(Event::ReadReg(reg, Vec::new(), value.clone()));
                                         assign(tid, loc, value, &mut frame.local_state, shared_state, solver)?
                                     }
-                                    None => return Err(ExecError::Type("reg_deref")),
+                                    None => return Err(ExecError::Type(format!("reg_deref {:?}", &reg))),
                                 }
                             } else {
-                                return Err(ExecError::Type("reg_deref (not a register)"));
+                                return Err(ExecError::Type(format!("reg_deref (not a register) {:?}", &f)));
                             };
                             frame.pc += 1
                         } else if shared_state.union_ctors.contains(f) {
@@ -835,9 +888,16 @@ fn run_loop<'ir, 'task, B: BV>(
                             .map(|arg| eval_exp(arg, &mut frame.local_state, shared_state, solver))
                             .collect::<Result<Vec<Val<B>>, _>>()?;
 
+                        //for i in 0..params.len() {
+                        //    println!("    {} = {:?}", shared_state.symtab.to_str(params[i].0), args[i])
+                        //}
                         if shared_state.probes.contains(f) {
                             let symbol = zencode::decode(shared_state.symtab.to_str(*f));
-                            log_from!(tid, log::PROBE, &format!("Calling {}[{:?}]({:?})", symbol, f, &args));
+                            log_from!(
+                                tid,
+                                log::PROBE,
+                                &format!("Calling {}[{:?}]({:?}) {}", symbol, f, &args, frame.pc)
+                            );
                             probe::args_info(tid, &args, shared_state, solver)
                         }
 
@@ -878,6 +938,14 @@ fn run_loop<'ir, 'task, B: BV>(
                         UVal::Uninit(ty) => symbolic(ty, shared_state, solver)?,
                         UVal::Init(value) => value.clone(),
                     };
+                    if shared_state.probes.contains(&frame.function_name) {
+                        let symbol = zencode::decode(shared_state.symtab.to_str(frame.function_name));
+                        log_from!(
+                            tid,
+                            log::PROBE,
+                            &format!("Returning {}[{:?}] = {:?}", symbol, frame.function_name, value)
+                        );
+                    }
                     let caller = match &frame.stack_call {
                         None => return Ok(value),
                         Some(caller) => Arc::clone(caller),
@@ -902,7 +970,7 @@ fn run_loop<'ir, 'task, B: BV>(
 
                     let point = checkpoint(solver);
 
-                    let len = solver.length(v).ok_or_else(|| ExecError::Type("_monomorphize"))?;
+                    let len = solver.length(v).ok_or_else(|| ExecError::Type(format!("_monomorphize {:?}", &v)))?;
 
                     // For the variable v to appear in the model, there must be some assertion that references it
                     let sym = solver.declare_const(BitVec(len));
@@ -918,7 +986,7 @@ fn run_loop<'ir, 'task, B: BV>(
                         match model.get_var(v) {
                             Ok(Some(Bits64(result, size))) => (result, size),
                             // __monomorphize should have a 'n <= 64 constraint in Sail
-                            Ok(Some(_)) => return Err(ExecError::Type("__monomorphize")),
+                            Ok(Some(other)) => return Err(ExecError::Type(format!("__monomorphize {:?}", &other))),
                             Ok(None) => return Err(ExecError::Z3Error(format!("No value for variable v{}", v))),
                             Err(error) => return Err(error),
                         }
@@ -957,6 +1025,10 @@ fn run_loop<'ir, 'task, B: BV>(
             // C++ compilers). The value should never be used, so we
             // return Val::Poison here.
             Instr::Arbitrary => {
+                if shared_state.probes.contains(&frame.function_name) {
+                    let symbol = zencode::decode(shared_state.symtab.to_str(frame.function_name));
+                    log_from!(tid, log::PROBE, &format!("Returning {}[{:?}] = poison", symbol, frame.function_name));
+                }
                 let caller = match &frame.stack_call {
                     None => return Ok(Val::Poison),
                     Some(caller) => Arc::clone(caller),
@@ -990,15 +1062,15 @@ pub type Collector<'ir, B, R> = dyn 'ir
 /// program variables, a checkpoint which allows us to reconstruct the
 /// SMT solver state, and finally an option SMTLIB definiton which is
 /// added to the solver state when the task is resumed.
-pub struct Task<'ir, 'task, B> {
-    id: usize,
-    frame: Frame<'ir, B>,
-    checkpoint: Checkpoint<B>,
-    fork_cond: Option<smtlib::Def>,
-    stop_functions: Option<&'task HashSet<Name>>,
+pub struct Task<'ir, 'task, B: BV> {
+    pub id: usize,
+    pub frame: Frame<'ir, B>,
+    pub checkpoint: Checkpoint<B>,
+    pub fork_cond: Option<smtlib::Def>,
+    pub stop_functions: Option<&'task HashSet<Name>>,
 }
 
-impl<'ir, 'task, B> Task<'ir, 'task, B> {
+impl<'ir, 'task, B: BV> Task<'ir, 'task, B> {
     pub fn set_stop_functions(&mut self, new_fns: &'task HashSet<Name>) {
         self.stop_functions = Some(new_fns);
     }
@@ -1015,14 +1087,15 @@ pub fn start_single<'ir, 'task, B: BV, R>(
     let queue = Worker::new_lifo();
     queue.push(task);
     while let Some(task) = queue.pop() {
-        let cfg = Config::new();
+        let mut cfg = Config::new();
         cfg.set_param_value("model", "true");
         let ctx = Context::new(cfg);
         let mut solver = Solver::from_checkpoint(&ctx, task.checkpoint);
         if let Some(def) = task.fork_cond {
             solver.add(def)
         };
-        let result = run(0, task.id, Timeout::unlimited(), task.stop_functions, &queue, &task.frame, shared_state, &mut solver);
+        let result =
+            run(0, task.id, Timeout::unlimited(), task.stop_functions, &queue, &task.frame, shared_state, &mut solver);
         collector(0, task.id, result, shared_state, solver, collected)
     }
 }
@@ -1186,7 +1259,7 @@ pub fn all_unsat_collector<'ir, B: BV>(
     tid: usize,
     _: usize,
     result: Result<(Val<B>, LocalFrame<'ir, B>), (ExecError, Backtrace)>,
-    _: &SharedState<'ir, B>,
+    shared_state: &SharedState<'ir, B>,
     mut solver: Solver<B>,
     collected: &AtomicBool,
 ) {
@@ -1210,10 +1283,15 @@ pub fn all_unsat_collector<'ir, B: BV>(
             }
             (value, _) => log_from!(tid, log::VERBOSE, &format!("Got value {:?}", value)),
         },
-        Err((err, _)) => match err {
+        Err((err, backtrace)) => match err {
             ExecError::Dead => log_from!(tid, log::VERBOSE, "Dead"),
             _ => {
-                log_from!(tid, log::VERBOSE, &format!("Got error, {:?}", err));
+                if_logging!(log::VERBOSE, {
+                    log_from!(tid, log::VERBOSE, &format!("Got error, {:?}", err));
+                    for (f, pc) in backtrace.iter().rev() {
+                        log_from!(tid, log::VERBOSE, format!("  {} @ {}", shared_state.symtab.to_str(*f), pc));
+                    }
+                });
                 collected.store(false, Ordering::Release)
             }
         },

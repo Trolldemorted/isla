@@ -194,9 +194,9 @@ export class IslaUI {
             let model = new Model(content.graphs, this.getView().state.options)
             console.log(model.graphviz())
             this.getView().getGraph().setModel(model)
-            this.getView().state.console += "Allowed: " + num_allowed + " out of " + content.candidates + " allowed\n"
+            this.getView().state.console += "Allowed: " + num_allowed + " satisfiable solutions out of " + content.candidates + " candidates\n"
           } else {
-            this.getView().state.console += "Forbidden: 0 out of " + content.candidates + " candidates allowed\n"
+            this.getView().state.console += "Forbidden: 0 satisfiable solutions out of " + content.candidates + " candidates\n"
           }
           this.getView().emit('update')
         } else if (response.tag = 'Error') {
@@ -310,8 +310,7 @@ export class IslaUI {
       state = _.cloneDeep(this.currentView.state)
     this.add(new View(title, litmus, catname, cat, state, config))
     this.getView().setArch(arch)
-    if (state)
-      this.updateUI(state)
+    this.updateUI(this.getView().state)
     this.refresh()
   }
 
@@ -336,6 +335,7 @@ export class IslaUI {
         'litmus': this.getView().getLitmus().getValue(),
         'litmus_format': this.getView().getLitmus().getFormat(),
         'ignore_ifetch': this.getView().state.options.ignore_ifetch,
+        'exhaustive': this.getView().state.options.exhaustive,
       },
       dataType: 'json'
     }).done((data, status, query) => {

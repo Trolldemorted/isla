@@ -44,14 +44,15 @@ use z3_sys::*;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::error::Error;
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::fmt;
 use std::io::Write;
 use std::mem;
 use std::ptr;
 use std::sync::Arc;
+use std::time::Instant;
 
-use crate::concrete::BV;
+use crate::{concrete::BV, memory::Address};
 use crate::error::ExecError;
 use crate::ir::{EnumMember, Name, Symtab, Val};
 use crate::zencode;
@@ -307,11 +308,11 @@ use smtlib::*;
 
 /// Snapshot of interaction with underlying solver that can be
 /// efficiently cloned and shared between threads.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct Checkpoint<B> {
-    num: usize,
-    next_var: u32,
-    trace: Arc<Option<Trace<B>>>,
+    pub num: usize,
+    pub next_var: u32,
+    pub trace: Arc<Option<Trace<B>>>,
 }
 
 impl<B> Checkpoint<B> {
@@ -353,12 +354,12 @@ pub enum Event<B> {
     Fork(u32, Sym, String),
     ReadReg(Name, Vec<Accessor>, Val<B>),
     WriteReg(Name, Vec<Accessor>, Val<B>),
-    ReadMem { value: Val<B>, read_kind: Val<B>, address: Val<B>, bytes: u32 },
-    WriteMem { value: Sym, write_kind: Val<B>, address: Val<B>, data: Val<B>, bytes: u32 },
+    ReadMem { value: Val<B>, read_kind: Val<B>, address: Val<B>, bytes: u32, tag_value: Option<Val<B>> },
+    WriteMem { value: Sym, write_kind: Val<B>, address: Val<B>, data: Val<B>, bytes: u32, tag_value: Option<Val<B>> },
     Branch { address: Val<B> },
     Barrier { barrier_kind: Val<B> },
     CacheOp { cache_op_kind: Val<B>, address: Val<B> },
-    MarkReg { reg: Name, mark: String },
+    MarkReg { regs: Vec<Name>, mark: String },
     Cycle,
     Instr(Val<B>),
     Sleeping(Sym),
@@ -493,9 +494,9 @@ pub type EvPath<B> = Vec<Event<B>>;
 /// checkpoints can be created and shared.
 #[derive(Debug)]
 pub struct Trace<B> {
-    checkpoints: usize,
-    head: Vec<Event<B>>,
-    tail: Arc<Option<Trace<B>>>,
+    pub checkpoints: usize,
+    pub head: Vec<Event<B>>,
+    pub tail: Arc<Option<Trace<B>>>,
 }
 
 impl<B: BV> Trace<B> {
@@ -558,12 +559,17 @@ impl Default for Config {
 }
 
 impl Config {
-    pub fn set_param_value(&self, id: &str, value: &str) {
-        use std::ffi::CString;
+    pub fn set_param_value(&mut self, id: &str, value: &str) {
         let id = CString::new(id).unwrap();
         let value = CString::new(value).unwrap();
         unsafe { Z3_set_param_value(self.z3_cfg, id.as_ptr(), value.as_ptr()) }
     }
+}
+
+pub fn global_set_param_value(id: &str, value: &str) {
+    let id = CString::new(id).unwrap();
+    let value = CString::new(value).unwrap();
+    unsafe { Z3_global_param_set(id.as_ptr(), value.as_ptr()) }
 }
 
 /// Context is a wrapper around `Z3_context`.
@@ -1113,7 +1119,7 @@ impl<'ctx, B> Drop for Solver<'ctx, B> {
 /// # use isla_lib::smt::smtlib::*;
 /// # use isla_lib::smt::*;
 /// # let x = Sym::from_u32(0);
-/// let cfg = Config::new();
+/// let mut cfg = Config::new();
 /// cfg.set_param_value("model", "true");
 /// let ctx = Context::new(cfg);
 /// let mut solver = Solver::<B64>::new(&ctx);
@@ -1187,7 +1193,7 @@ impl<'ctx, B: BV> Model<'ctx, B> {
 
     pub fn get_var(&mut self, var: Sym) -> Result<Option<Exp>, ExecError> {
         let var_ast = match self.solver.decls.get(&var) {
-            None => return Err(ExecError::Type("Unbound variable")),
+            None => return Err(ExecError::Type(format!("Unbound variable {:?}", &var))),
             Some(ast) => ast.clone(),
         };
         self.get_ast(var_ast)
@@ -1248,7 +1254,7 @@ impl<'ctx, B: BV> Model<'ctx, B> {
                 Z3_dec_ref(z3_ctx, Z3_func_decl_to_ast(z3_ctx, func_decl));
                 result
             } else {
-                Err(ExecError::Type("get_ast"))
+                Err(ExecError::Type("get_ast".to_string()))
             };
 
             Z3_dec_ref(z3_ctx, Z3_sort_to_ast(z3_ctx, sort));
@@ -1257,7 +1263,7 @@ impl<'ctx, B: BV> Model<'ctx, B> {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SmtResult {
     Sat,
     Unsat,
@@ -1288,11 +1294,25 @@ impl SmtResult {
     }
 }
 
+static QFAUFBV_STR: &[u8] = b"qfaufbv\0";
+
 impl<'ctx, B: BV> Solver<'ctx, B> {
     pub fn new(ctx: &'ctx Context) -> Self {
         unsafe {
-            let z3_solver = Z3_mk_simple_solver(ctx.z3_ctx);
+            let mut major: c_uint = 0;
+            let mut minor: c_uint = 0;
+            let mut build: c_uint = 0;
+            let mut revision: c_uint = 0;
+            Z3_get_version(&mut major, &mut minor, &mut build, &mut revision);
+
+            // The QF_AUFBV solver has good performance on our problems, but we need to initialise it
+            // using a tactic rather than the logic name to ensure that the enumerations are supported,
+            // otherwise Z3 may crash.
+            let qfaufbv_tactic = Z3_mk_tactic(ctx.z3_ctx, CStr::from_bytes_with_nul_unchecked(QFAUFBV_STR).as_ptr());
+            Z3_tactic_inc_ref(ctx.z3_ctx, qfaufbv_tactic);
+            let z3_solver = Z3_mk_solver_from_tactic(ctx.z3_ctx, qfaufbv_tactic);
             Z3_solver_inc_ref(ctx.z3_ctx, z3_solver);
+
             Solver {
                 ctx,
                 z3_solver,
@@ -1479,14 +1499,22 @@ impl<'ctx, B: BV> Solver<'ctx, B> {
         self.cycles
     }
 
-    pub fn add_event(&mut self, event: Event<B>) {
-        if let Event::Smt(def) = &event {
+    fn add_event_internal(&mut self, event: &Event<B>) {
+        if let Event::Smt(def) = event {
             self.add_internal(def)
         };
+    }
+
+    pub fn add_event(&mut self, event: Event<B>) {
+        self.add_event_internal(&event);
         self.trace.head.push(event)
     }
 
     fn replay(&mut self, num: usize, trace: Arc<Option<Trace<B>>>) {
+        // Some extra work would be required to replay on top of
+        // another trace, so until we need to do that we'll check it's
+        // empty:
+        assert!(self.trace.checkpoints == 0 && self.trace.head.is_empty());
         let mut checkpoints: Vec<&[Event<B>]> = Vec::with_capacity(num);
         let mut next = &*trace;
         loop {
@@ -1501,9 +1529,11 @@ impl<'ctx, B: BV> Solver<'ctx, B> {
         assert!(checkpoints.len() == num);
         for events in checkpoints.iter().rev() {
             for event in *events {
-                self.add_event(event.clone())
+                self.add_event_internal(&event)
             }
         }
+        self.trace.checkpoints = num;
+        self.trace.tail = trace
     }
 
     pub fn from_checkpoint(ctx: &'ctx Context, Checkpoint { num, next_var, trace }: Checkpoint<B>) -> Self {
@@ -1544,13 +1574,33 @@ impl<'ctx, B: BV> Solver<'ctx, B> {
         }
     }
 
-    pub fn dump_solver(&mut self, filename: String) {
+    pub fn dump_solver(&mut self, filename: &str) {
         let mut file = std::fs::File::create(filename).expect("Failed to open solver dump file");
         unsafe {
             let s = Z3_solver_to_string(self.ctx.z3_ctx, self.z3_solver);
             let cs = CStr::from_ptr(s);
             file.write_all(cs.to_bytes()).expect("Failed to write solver dump");
         }
+    }
+
+    pub fn dump_solver_with(&mut self, filename: &str, exp: &Exp) {
+        let mut file = std::fs::File::create(filename).expect("Failed to open solver dump file");
+        unsafe {
+            let s = Z3_solver_to_string(self.ctx.z3_ctx, self.z3_solver);
+            let cs = CStr::from_ptr(s);
+            file.write_all(cs.to_bytes()).expect("Failed to write solver dump");
+            writeln!(file, "{}", self.exp_to_str(exp)).expect("Failed to write exp");
+        }
+    }
+
+    pub fn exp_to_str(&mut self, exp: &Exp) -> String {
+        let ast = self.translate_exp(exp);
+        let cs;
+        unsafe {
+            let s = Z3_ast_to_string(ast.ctx.z3_ctx, ast.z3_ast);
+            cs = CStr::from_ptr(s);
+        }
+        cs.to_string_lossy().to_string()
     }
 }
 
@@ -1608,7 +1658,7 @@ mod tests {
 
     #[test]
     fn get_const() {
-        let cfg = Config::new();
+        let mut cfg = Config::new();
         cfg.set_param_value("model", "true");
         let ctx = Context::new(cfg);
         let mut solver = Solver::<B64>::new(&ctx);
@@ -1643,7 +1693,7 @@ mod tests {
 
     #[test]
     fn get_enum_const() {
-        let cfg = Config::new();
+        let mut cfg = Config::new();
         cfg.set_param_value("model", "true");
         let ctx = Context::new(cfg);
         let mut solver = Solver::<B64>::new(&ctx);
@@ -1668,7 +1718,7 @@ mod tests {
 
     #[test]
     fn smt_func() {
-        let cfg = Config::new();
+        let mut cfg = Config::new();
         cfg.set_param_value("model", "true");
         let ctx = Context::new(cfg);
         let mut solver = Solver::<B64>::new(&ctx);

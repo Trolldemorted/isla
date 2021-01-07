@@ -102,10 +102,6 @@ impl<A: Clone> Loc<A> {
             Loc::Field(loc, _) | Loc::Addr(loc) => loc.id_mut(),
         }
     }
-
-    pub(crate) fn collect_variables<'a, 'b>(&'a mut self, vars: &'b mut Vec<Variable<'a, A>>) {
-        vars.push(Variable::Declaration(self.id_mut()))
-    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -375,7 +371,7 @@ impl<A: Hash + Eq + Clone> Exp<A> {
 }
 
 #[derive(Clone)]
-pub enum Instr<A, B> {
+pub enum Instr<A, B: BV> {
     Decl(A, Ty<A>),
     Init(A, Ty<A>, Exp<A>),
     Jump(Exp<A>, usize, String),
@@ -391,7 +387,7 @@ pub enum Instr<A, B> {
     End,
 }
 
-impl<A: fmt::Debug, B: fmt::Debug> fmt::Debug for Instr<A, B> {
+impl<A: fmt::Debug, B: BV> fmt::Debug for Instr<A, B> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Instr::*;
         match self {
@@ -414,11 +410,11 @@ impl<A: fmt::Debug, B: fmt::Debug> fmt::Debug for Instr<A, B> {
 
 /// Append instructions from rhs into the lhs vector, leaving rhs
 /// empty (the same behavior as Vec::append).
-pub fn append_instrs<A, B>(lhs: &mut Vec<Instr<A, B>>, rhs: &mut Vec<Instr<A, B>>) {
+pub fn append_instrs<A, B: BV>(lhs: &mut Vec<Instr<A, B>>, rhs: &mut Vec<Instr<A, B>>) {
     for instr in rhs.iter_mut() {
         match instr {
-            Instr::Goto(label) => *label = *label + lhs.len(),
-            Instr::Jump(_, label, _) => *label = *label + lhs.len(),
+            Instr::Goto(label) => *label += lhs.len(),
+            Instr::Jump(_, label, _) => *label += lhs.len(),
             _ => (),
         }
     }
@@ -426,7 +422,7 @@ pub fn append_instrs<A, B>(lhs: &mut Vec<Instr<A, B>>, rhs: &mut Vec<Instr<A, B>
 }
 
 #[derive(Clone)]
-pub enum Def<A, B> {
+pub enum Def<A, B: BV> {
     Register(A, Ty<A>),
     Let(Vec<(A, Ty<A>)>, Vec<Instr<A, B>>),
     Enum(A, Vec<A>),
@@ -506,6 +502,12 @@ pub const SAIL_EXCEPTION: Name = Name { id: 13 };
 /// [TOP_LEVEL_LET] is a name used in backtraces when evaluating a top-level let definition
 pub const TOP_LEVEL_LET: Name = Name { id: 14 };
 
+/// [BV_BIT_LEFT] is the field name for the left element of a bitvector,bit pair
+pub const BV_BIT_LEFT: Name = Name { id: 15 };
+
+/// [BV_BIT_RIGHT] is the field name for the right element of a bitvector,bit pair
+pub const BV_BIT_RIGHT: Name = Name { id: 16 };
+
 static GENSYM: &str = "|GENSYM|";
 
 impl<'ir> Symtab<'ir> {
@@ -568,6 +570,8 @@ impl<'ir> Symtab<'ir> {
         symtab.intern("reg_deref");
         symtab.intern("zexception");
         symtab.intern("|let|");
+        symtab.intern("ztuplez3z5bv_z5bit0");
+        symtab.intern("ztuplez3z5bv_z5bit1");
         symtab
     }
 
@@ -709,7 +713,7 @@ type Fn<'ir, B> = (Vec<(Name, &'ir Ty<Name>)>, Ty<Name>, &'ir [Instr<Name, B>]);
 /// All symbolic evaluation happens over some (immutable) IR. The
 /// [SharedState] provides each worker that is performing symbolic
 /// evaluation with a convenient view into that IR.
-pub struct SharedState<'ir, B> {
+pub struct SharedState<'ir, B: BV> {
     /// A map from function identifers to function bodies and parameter lists
     pub functions: HashMap<Name, Fn<'ir, B>>,
     /// The symbol table for the IR
@@ -869,7 +873,7 @@ pub(crate) fn insert_primops<B: BV>(defs: &mut [Def<Name, B>], mode: AssertionMo
 /// explicit labels, and then going back to the offset based
 /// representation for execution.
 #[derive(Debug)]
-pub enum LabeledInstr<B> {
+pub enum LabeledInstr<B: BV> {
     Labeled(usize, Instr<Name, B>),
     Unlabeled(Instr<Name, B>),
 }

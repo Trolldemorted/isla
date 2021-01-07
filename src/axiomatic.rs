@@ -44,6 +44,7 @@ use isla_axiomatic::cat_config::tcx_from_config;
 use isla_axiomatic::graph::{graph_from_z3_output, Graph};
 use isla_axiomatic::litmus::Litmus;
 use isla_axiomatic::run_litmus;
+use isla_axiomatic::run_litmus::LitmusRunOpts;
 use isla_cat::cat;
 use isla_lib::concrete::bitvector64::B64;
 use isla_lib::init::{initialize_architecture, Initialized};
@@ -52,6 +53,10 @@ use isla_lib::log;
 
 mod opts;
 use opts::CommonOpts;
+
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static FAILURE: AtomicBool = AtomicBool::new(false);
 
 fn main() {
     let code = isla_main();
@@ -137,6 +142,8 @@ fn isla_main() -> i32 {
     opts.optopt("s", "timeout", "Add a timeout (in seconds)", "<n>");
     opts.reqopt("m", "model", "Memory model in cat format", "<path>");
     opts.optflag("", "ifetch", "Generate ifetch events");
+    opts.optflag("", "armv8-page-tables", "Automatically set up ARMv8 page tables");
+    opts.optflag("e", "exhaustive", "Attempt to exhaustively enumerate all possible rf combinations");
     opts.optopt("", "dot", "Generate graphviz dot files in specified directory", "<path>");
     opts.optflag("", "temp-dot", "Generate graphviz dot files in TMPDIR or /tmp");
     opts.optflag(
@@ -166,6 +173,8 @@ fn isla_main() -> i32 {
 
     let use_ifetch = matches.opt_present("ifetch");
 
+    let armv8_page_tables = matches.opt_present("armv8-page-tables");
+
     let cache = matches.opt_str("cache").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
     fs::create_dir_all(&cache).expect("Failed to create cache directory if missing");
     if !cache.is_dir() {
@@ -189,7 +198,10 @@ fn isla_main() -> i32 {
             }
         }
     };
+
     let view = matches.opt_present("view");
+
+    let exhaustive = matches.opt_present("exhaustive");
 
     let timeout: Option<u64> = match matches.opt_get("timeout") {
         Ok(timeout) => timeout,
@@ -306,12 +318,18 @@ fn isla_main() -> i32 {
                     let now = Instant::now();
                     let result_queue = SegQueue::new();
 
+                    let opts = LitmusRunOpts {
+                        num_threads: threads_per_test,
+                        timeout,
+                        ignore_ifetch: !use_ifetch,
+                        exhaustive,
+                        armv8_page_tables,
+                    };
+
                     let run_info = run_litmus::smt_output_per_candidate::<B64, _, _, ()>(
                         &format!("g{}t{}", group_id, i),
-                        threads_per_test,
-                        timeout,
+                        &opts,
                         &litmus,
-                        !use_ifetch,
                         cat,
                         regs.clone(),
                         lets.clone(),
@@ -343,7 +361,8 @@ fn isla_main() -> i32 {
 
                     let ref_result = refs.get(&litmus.name);
 
-                    if run_info.is_err() {
+                    if let Err(msg) = run_info {
+                        println!("{:?}", msg);
                         print_results(&litmus.name, now, &[Error], ref_result);
                         continue;
                     }
@@ -382,7 +401,11 @@ fn isla_main() -> i32 {
     })
     .unwrap();
 
-    0
+    if FAILURE.load(Ordering::Relaxed) {
+        1
+    } else {
+        0
+    }
 }
 
 fn print_results(name: &str, start_time: Instant, results: &[AxResult], expected: Option<&AxResult>) {
@@ -419,8 +442,10 @@ fn print_results(name: &str, start_time: Instant, results: &[AxResult], expected
         if got.matches(reference) {
             "\x1b[92m\x1b[1mok\x1b[0m"
         } else if got.is_error() {
+            FAILURE.store(true, Ordering::Relaxed);
             "\x1b[95m\x1b[1merror\x1b[0m"
         } else {
+            FAILURE.store(true, Ordering::Relaxed);
             "\x1b[91m\x1b[1mfail\x1b[0m"
         }
     } else {
@@ -458,6 +483,9 @@ fn process_at_line<P: AsRef<Path>>(
     if pathbuf.file_name()?.to_string_lossy().starts_with('@') {
         Some(process_at_file(&pathbuf, tests))
     } else if pathbuf.extension()?.to_string_lossy() == "litmus" {
+        tests.push(pathbuf);
+        Some(Ok(()))
+    } else if pathbuf.extension()?.to_string_lossy() == "toml" {
         tests.push(pathbuf);
         Some(Ok(()))
     } else {

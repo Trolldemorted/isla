@@ -107,7 +107,7 @@ fn smt_ones(i: i128) -> Exp {
     Exp::Bits(vec![true; i as usize])
 }
 
-fn smt_sbits<B: BV>(bv: B) -> Exp {
+pub fn smt_sbits<B: BV>(bv: B) -> Exp {
     if let Ok(u) = bv.try_into() {
         Exp::Bits64(u, bv.len())
     } else {
@@ -185,7 +185,7 @@ fn assume<B: BV>(x: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>, ExecError>
                 Ok(Val::Unit)
             }
         }
-        _ => Err(ExecError::Type("assert")),
+        _ => Err(ExecError::Type(format!("assert {:?}", &x))),
     }
 }
 
@@ -193,7 +193,7 @@ fn assume<B: BV>(x: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>, ExecError>
 fn optimistic_assert<B: BV>(x: Val<B>, message: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>, ExecError> {
     let message = match message {
         Val::String(message) => message,
-        _ => return Err(ExecError::Type("optimistic_assert")),
+        _ => return Err(ExecError::Type(format!("optimistic_assert {:?}", &message))),
     };
     match x {
         Val::Symbolic(v) => {
@@ -213,7 +213,7 @@ fn optimistic_assert<B: BV>(x: Val<B>, message: Val<B>, solver: &mut Solver<B>) 
                 Err(ExecError::AssertionFailed(message))
             }
         }
-        _ => Err(ExecError::Type("optimistic_assert")),
+        _ => Err(ExecError::Type(format!("optimistic_assert {:?}", &x))),
     }
 }
 
@@ -221,7 +221,7 @@ fn optimistic_assert<B: BV>(x: Val<B>, message: Val<B>, solver: &mut Solver<B>) 
 fn pessimistic_assert<B: BV>(x: Val<B>, message: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>, ExecError> {
     let message = match message {
         Val::String(message) => message,
-        _ => return Err(ExecError::Type("pessimistic_assert")),
+        _ => return Err(ExecError::Type(format!("pessimistic_assert {:?}", &message))),
     };
     match x {
         Val::Symbolic(v) => {
@@ -240,7 +240,7 @@ fn pessimistic_assert<B: BV>(x: Val<B>, message: Val<B>, solver: &mut Solver<B>)
                 Err(ExecError::AssertionFailed(message))
             }
         }
-        _ => Err(ExecError::Type("pessimistic_assert")),
+        _ => Err(ExecError::Type(format!("pessimistic_assert {:?}", &x))),
     }
 }
 
@@ -250,7 +250,7 @@ fn i64_to_i128<B: BV>(x: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>, ExecE
     match x {
         Val::I64(x) => Ok(Val::I128(i128::from(x))),
         Val::Symbolic(x) => solver.define_const(Exp::SignExtend(64, Box::new(Exp::Var(x)))).into(),
-        _ => Err(ExecError::Type("%i64->%i")),
+        _ => Err(ExecError::Type(format!("%i64->%i {:?}", &x))),
     }
 }
 
@@ -261,7 +261,7 @@ fn i128_to_i64<B: BV>(x: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>, ExecE
             Err(_) => Err(ExecError::Overflow),
         },
         Val::Symbolic(x) => solver.define_const(Exp::Extract(63, 0, Box::new(Exp::Var(x)))).into(),
-        _ => Err(ExecError::Type("%i->%i64")),
+        _ => Err(ExecError::Type(format!("%i->%i64 {:?}", &x))),
     }
 }
 
@@ -276,7 +276,7 @@ pub(crate) fn op_eq<B: BV>(x: Val<B>, y: Val<B>, solver: &mut Solver<B>) -> Resu
             } else if xs.is_empty() && ys.is_empty() {
                 Ok(Val::Bool(true))
             } else {
-                Err(ExecError::Type("op_eq"))
+                Err(ExecError::Type(format!("op_eq {:?} {:?}", &xs, &ys)))
             }
         }
         (x, y) => eq_anything(x, y, solver),
@@ -291,7 +291,7 @@ pub(crate) fn op_neq<B: BV>(x: Val<B>, y: Val<B>, solver: &mut Solver<B>) -> Res
             } else if xs.is_empty() && ys.is_empty() {
                 Ok(Val::Bool(false))
             } else {
-                Err(ExecError::Type("op_neq"))
+                Err(ExecError::Type(format!("op_neq {:?} {:?}", &xs, &ys)))
             }
         }
         (x, y) => neq_anything(x, y, solver),
@@ -302,9 +302,9 @@ pub(crate) fn op_head<B: BV>(xs: Val<B>, _: &mut Solver<B>) -> Result<Val<B>, Ex
     match xs {
         Val::List(mut xs) => match xs.pop() {
             Some(x) => Ok(x),
-            None => Err(ExecError::Type("op_head")),
+            None => Err(ExecError::Type(format!("op_head (list empty) {:?}", &xs))),
         },
-        _ => Err(ExecError::Type("op_head")),
+        _ => Err(ExecError::Type(format!("op_head {:?}", &xs))),
     }
 }
 
@@ -314,16 +314,16 @@ pub(crate) fn op_tail<B: BV>(xs: Val<B>, _: &mut Solver<B>) -> Result<Val<B>, Ex
             xs.pop();
             Ok(Val::List(xs))
         }
-        _ => Err(ExecError::Type("op_tail")),
+        _ => Err(ExecError::Type(format!("op_tail {:?}", &xs))),
     }
 }
 
-binary_primop!(op_lt, "op_lt", Val::I64, Val::Bool, i64::lt, Exp::Bvslt, smt_i64);
-binary_primop!(op_gt, "op_gt", Val::I64, Val::Bool, i64::gt, Exp::Bvsgt, smt_i64);
-binary_primop!(op_lteq, "op_lteq", Val::I64, Val::Bool, i64::le, Exp::Bvsle, smt_i64);
-binary_primop!(op_gteq, "op_gteq", Val::I64, Val::Bool, i64::ge, Exp::Bvsge, smt_i64);
-binary_primop_copy!(op_add, "op_add", Val::I64, Val::I64, i64::wrapping_add, Exp::Bvadd, smt_i64);
-binary_primop_copy!(op_sub, "op_sub", Val::I64, Val::I64, i64::wrapping_sub, Exp::Bvsub, smt_i64);
+binary_primop!(op_lt, "op_lt".to_string(), Val::I64, Val::Bool, i64::lt, Exp::Bvslt, smt_i64);
+binary_primop!(op_gt, "op_gt".to_string(), Val::I64, Val::Bool, i64::gt, Exp::Bvsgt, smt_i64);
+binary_primop!(op_lteq, "op_lteq".to_string(), Val::I64, Val::Bool, i64::le, Exp::Bvsle, smt_i64);
+binary_primop!(op_gteq, "op_gteq".to_string(), Val::I64, Val::Bool, i64::ge, Exp::Bvsge, smt_i64);
+binary_primop_copy!(op_add, "op_add".to_string(), Val::I64, Val::I64, i64::wrapping_add, Exp::Bvadd, smt_i64);
+binary_primop_copy!(op_sub, "op_sub".to_string(), Val::I64, Val::I64, i64::wrapping_sub, Exp::Bvsub, smt_i64);
 
 pub(crate) fn bit_to_bool<B: BV>(bit: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>, ExecError> {
     match bit {
@@ -331,7 +331,7 @@ pub(crate) fn bit_to_bool<B: BV>(bit: Val<B>, solver: &mut Solver<B>) -> Result<
         Val::Symbolic(bit) => {
             solver.define_const(Exp::Eq(Box::new(Exp::Bits([true].to_vec())), Box::new(Exp::Var(bit)))).into()
         }
-        _ => Err(ExecError::Type("bit_to_bool")),
+        _ => Err(ExecError::Type(format!("bit_to_bool {:?}", &bit))),
     }
 }
 
@@ -340,9 +340,9 @@ pub(crate) fn op_unsigned<B: BV>(bits: Val<B>, solver: &mut Solver<B>) -> Result
         Val::Bits(bits) => Ok(Val::I64(bits.unsigned() as i64)),
         Val::Symbolic(bits) => match solver.length(bits) {
             Some(length) => solver.define_const(Exp::ZeroExtend(64 - length, Box::new(Exp::Var(bits)))).into(),
-            None => Err(ExecError::Type("op_unsigned")),
+            None => Err(ExecError::Type(format!("op_unsigned {:?}", &bits))),
         },
-        _ => Err(ExecError::Type("op_unsigned")),
+        _ => Err(ExecError::Type(format!("op_unsigned {:?}", &bits))),
     }
 }
 
@@ -351,23 +351,23 @@ pub(crate) fn op_signed<B: BV>(bits: Val<B>, solver: &mut Solver<B>) -> Result<V
         Val::Bits(bits) => Ok(Val::I64(bits.signed() as i64)),
         Val::Symbolic(bits) => match solver.length(bits) {
             Some(length) => solver.define_const(Exp::SignExtend(64 - length, Box::new(Exp::Var(bits)))).into(),
-            None => Err(ExecError::Type("op_unsigned")),
+            None => Err(ExecError::Type(format!("op_unsigned (solver cannot determine length) {:?}", &bits))),
         },
-        _ => Err(ExecError::Type("op_unsigned")),
+        _ => Err(ExecError::Type(format!("op_unsigned {:?}", &bits))),
     }
 }
 
 // Basic comparisons
 
-unary_primop_copy!(not_bool, "not", Val::Bool, Val::Bool, bool::not, Exp::Not);
-binary_primop_copy!(and_bool, "and_bool", Val::Bool, Val::Bool, bool::bitand, Exp::And, Exp::Bool);
-binary_primop_copy!(or_bool, "or_bool", Val::Bool, Val::Bool, bool::bitor, Exp::Or, Exp::Bool);
-binary_primop!(eq_int, "eq_int", Val::I128, Val::Bool, i128::eq, Exp::Eq, smt_i128);
-binary_primop!(eq_bool, "eq_bool", Val::Bool, Val::Bool, bool::eq, Exp::Eq, Exp::Bool);
-binary_primop!(lteq_int, "lteq", Val::I128, Val::Bool, i128::le, Exp::Bvsle, smt_i128);
-binary_primop!(gteq_int, "gteq", Val::I128, Val::Bool, i128::ge, Exp::Bvsge, smt_i128);
-binary_primop!(lt_int, "lt", Val::I128, Val::Bool, i128::lt, Exp::Bvslt, smt_i128);
-binary_primop!(gt_int, "gt", Val::I128, Val::Bool, i128::gt, Exp::Bvsgt, smt_i128);
+unary_primop_copy!(not_bool, "not".to_string(), Val::Bool, Val::Bool, bool::not, Exp::Not);
+binary_primop_copy!(and_bool, "and_bool".to_string(), Val::Bool, Val::Bool, bool::bitand, Exp::And, Exp::Bool);
+binary_primop_copy!(or_bool, "or_bool".to_string(), Val::Bool, Val::Bool, bool::bitor, Exp::Or, Exp::Bool);
+binary_primop!(eq_int, "eq_int".to_string(), Val::I128, Val::Bool, i128::eq, Exp::Eq, smt_i128);
+binary_primop!(eq_bool, "eq_bool".to_string(), Val::Bool, Val::Bool, bool::eq, Exp::Eq, Exp::Bool);
+binary_primop!(lteq_int, "lteq".to_string(), Val::I128, Val::Bool, i128::le, Exp::Bvsle, smt_i128);
+binary_primop!(gteq_int, "gteq".to_string(), Val::I128, Val::Bool, i128::ge, Exp::Bvsge, smt_i128);
+binary_primop!(lt_int, "lt".to_string(), Val::I128, Val::Bool, i128::lt, Exp::Bvslt, smt_i128);
+binary_primop!(gt_int, "gt".to_string(), Val::I128, Val::Bool, i128::gt, Exp::Bvsgt, smt_i128);
 
 fn abs_int<B: BV>(x: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>, ExecError> {
     match x {
@@ -384,22 +384,22 @@ fn abs_int<B: BV>(x: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>, ExecError
             ));
             Ok(Val::Symbolic(y))
         }
-        _ => Err(ExecError::Type("abs_int")),
+        _ => Err(ExecError::Type(format!("abs_int {:?}", &x))),
     }
 }
 
 // Arithmetic operations
 
-binary_primop_copy!(sub_int, "sub_int", Val::I128, Val::I128, i128::wrapping_sub, Exp::Bvsub, smt_i128);
-binary_primop_copy!(mult_int, "mult_int", Val::I128, Val::I128, i128::wrapping_mul, Exp::Bvmul, smt_i128);
-unary_primop_copy!(neg_int, "neg_int", Val::I128, Val::I128, i128::wrapping_neg, Exp::Bvneg);
-binary_primop_copy!(tdiv_int, "tdiv_int", Val::I128, Val::I128, i128::wrapping_div, Exp::Bvsdiv, smt_i128);
-binary_primop_copy!(tmod_int, "tmod_int", Val::I128, Val::I128, i128::wrapping_rem, Exp::Bvsmod, smt_i128);
-binary_primop_copy!(shl_int, "shl_int", Val::I128, Val::I128, i128::shl, Exp::Bvshl, smt_i128);
-binary_primop_copy!(shr_int, "shr_int", Val::I128, Val::I128, i128::shr, Exp::Bvashr, smt_i128);
-binary_primop_copy!(shl_mach_int, "shl_mach_int", Val::I64, Val::I64, i64::shl, Exp::Bvshl, smt_i64);
-binary_primop_copy!(shr_mach_int, "shr_mach_int", Val::I64, Val::I64, i64::shr, Exp::Bvashr, smt_i64);
-binary_primop_copy!(udiv_int, "udiv_int", Val::I128, Val::I128, i128::wrapping_div, Exp::Bvudiv, smt_i128);
+binary_primop_copy!(sub_int, "sub_int".to_string(), Val::I128, Val::I128, i128::wrapping_sub, Exp::Bvsub, smt_i128);
+binary_primop_copy!(mult_int, "mult_int".to_string(), Val::I128, Val::I128, i128::wrapping_mul, Exp::Bvmul, smt_i128);
+unary_primop_copy!(neg_int, "neg_int".to_string(), Val::I128, Val::I128, i128::wrapping_neg, Exp::Bvneg);
+binary_primop_copy!(tdiv_int, "tdiv_int".to_string(), Val::I128, Val::I128, i128::wrapping_div, Exp::Bvsdiv, smt_i128);
+binary_primop_copy!(tmod_int, "tmod_int".to_string(), Val::I128, Val::I128, i128::wrapping_rem, Exp::Bvsmod, smt_i128);
+binary_primop_copy!(shl_int, "shl_int".to_string(), Val::I128, Val::I128, i128::shl, Exp::Bvshl, smt_i128);
+binary_primop_copy!(shr_int, "shr_int".to_string(), Val::I128, Val::I128, i128::shr, Exp::Bvashr, smt_i128);
+binary_primop_copy!(shl_mach_int, "shl_mach_int".to_string(), Val::I64, Val::I64, i64::shl, Exp::Bvshl, smt_i64);
+binary_primop_copy!(shr_mach_int, "shr_mach_int".to_string(), Val::I64, Val::I64, i64::shr, Exp::Bvashr, smt_i64);
+binary_primop_copy!(udiv_int, "udiv_int".to_string(), Val::I128, Val::I128, i128::wrapping_div, Exp::Bvudiv, smt_i128);
 
 pub(crate) fn add_int<B: BV>(x: Val<B>, y: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>, ExecError> {
     match (x, y) {
@@ -421,7 +421,7 @@ pub(crate) fn add_int<B: BV>(x: Val<B>, y: Val<B>, solver: &mut Solver<B>) -> Re
             }
         }
         (Val::I128(x), Val::I128(y)) => Ok(Val::I128(i128::wrapping_add(x, y))),
-        (_, _) => Err(ExecError::Type("add_int")),
+        (x, y) => Err(ExecError::Type(format!("add_int {:?} {:?}", &x, &y))),
     }
 }
 
@@ -440,7 +440,7 @@ fn max_int<B: BV>(x: Val<B>, y: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>
         (Val::I128(x), Val::Symbolic(y)) => symbolic_compare!(Exp::Bvsgt, smt_i128(x), Exp::Var(y), solver),
         (Val::Symbolic(x), Val::I128(y)) => symbolic_compare!(Exp::Bvsgt, Exp::Var(x), smt_i128(y), solver),
         (Val::Symbolic(x), Val::Symbolic(y)) => symbolic_compare!(Exp::Bvsgt, Exp::Var(x), Exp::Var(y), solver),
-        (_, _) => Err(ExecError::Type("max_int")),
+        (x, y) => Err(ExecError::Type(format!("max_int {:?} {:?}", &x, &y))),
     }
 }
 
@@ -450,7 +450,7 @@ fn min_int<B: BV>(x: Val<B>, y: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>
         (Val::I128(x), Val::Symbolic(y)) => symbolic_compare!(Exp::Bvslt, smt_i128(x), Exp::Var(y), solver),
         (Val::Symbolic(x), Val::I128(y)) => symbolic_compare!(Exp::Bvslt, Exp::Var(x), smt_i128(y), solver),
         (Val::Symbolic(x), Val::Symbolic(y)) => symbolic_compare!(Exp::Bvslt, Exp::Var(x), Exp::Var(y), solver),
-        (_, _) => Err(ExecError::Type("max_int")),
+        (x, y) => Err(ExecError::Type(format!("max_int {:?} {:?}", &x, &y))),
     }
 }
 
@@ -458,14 +458,14 @@ fn pow2<B: BV>(x: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>, ExecError> {
     match x {
         Val::I128(x) => Ok(Val::I128(1 << x)),
         Val::Symbolic(x) => solver.define_const(Exp::Bvshl(Box::new(smt_i128(1)), Box::new(Exp::Var(x)))).into(),
-        _ => Err(ExecError::Type("pow2")),
+        _ => Err(ExecError::Type(format!("pow2 {:?}", &x))),
     }
 }
 
 fn pow_int<B: BV>(x: Val<B>, y: Val<B>, _solver: &mut Solver<B>) -> Result<Val<B>, ExecError> {
     match (x, y) {
         (Val::I128(x), Val::I128(y)) => Ok(Val::I128(x.pow(y.try_into().map_err(|_| ExecError::Overflow)?))),
-        (_, _) => Err(ExecError::Type("pow_int")),
+        (x, y) => Err(ExecError::Type(format!("pow_int {:?} {:?}", &x, &y))),
     }
 }
 
@@ -481,7 +481,7 @@ fn sub_nat<B: BV>(x: Val<B>, y: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>
         (Val::Symbolic(x), Val::Symbolic(y)) => {
             symbolic_compare!(Exp::Bvsgt, Exp::Bvsub(Box::new(Exp::Var(x)), Box::new(Exp::Var(y))), smt_i128(0), solver)
         }
-        (_, _) => Err(ExecError::Type("sub_nat")),
+        (x, y) => Err(ExecError::Type(format!("sub_nat {:?} {:?}", &x, &y))),
     }
 }
 
@@ -491,21 +491,21 @@ fn length<B: BV>(x: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>, ExecError>
     match x {
         Val::Symbolic(v) => match solver.length(v) {
             Some(len) => Ok(Val::I128(i128::from(len))),
-            None => Err(ExecError::Type("length")),
+            None => Err(ExecError::Type(format!("length (solver cannot determine length) {:?}", &v))),
         },
         Val::Bits(bv) => Ok(Val::I128(bv.len_i128())),
-        _ => Err(ExecError::Type("length")),
+        _ => Err(ExecError::Type(format!("length {:?}", &x))),
     }
 }
 
-binary_primop!(eq_bits, "eq_bits", Val::Bits, Val::Bool, B::eq, Exp::Eq, smt_sbits);
-binary_primop!(neq_bits, "neq_bits", Val::Bits, Val::Bool, B::ne, Exp::Neq, smt_sbits);
-unary_primop_copy!(not_bits, "not_bits", Val::Bits, Val::Bits, B::not, Exp::Bvnot);
-binary_primop_copy!(xor_bits, "xor_bits", Val::Bits, Val::Bits, B::bitxor, Exp::Bvxor, smt_sbits);
-binary_primop_copy!(or_bits, "or_bits", Val::Bits, Val::Bits, B::bitor, Exp::Bvor, smt_sbits);
-binary_primop_copy!(and_bits, "and_bits", Val::Bits, Val::Bits, B::bitand, Exp::Bvand, smt_sbits);
-binary_primop_copy!(add_bits, "add_bits", Val::Bits, Val::Bits, B::add, Exp::Bvadd, smt_sbits);
-binary_primop_copy!(sub_bits, "sub_bits", Val::Bits, Val::Bits, B::sub, Exp::Bvsub, smt_sbits);
+binary_primop!(eq_bits, "eq_bits".to_string(), Val::Bits, Val::Bool, B::eq, Exp::Eq, smt_sbits);
+binary_primop!(neq_bits, "neq_bits".to_string(), Val::Bits, Val::Bool, B::ne, Exp::Neq, smt_sbits);
+unary_primop_copy!(not_bits, "not_bits".to_string(), Val::Bits, Val::Bits, B::not, Exp::Bvnot);
+binary_primop_copy!(xor_bits, "xor_bits".to_string(), Val::Bits, Val::Bits, B::bitxor, Exp::Bvxor, smt_sbits);
+binary_primop_copy!(or_bits, "or_bits".to_string(), Val::Bits, Val::Bits, B::bitor, Exp::Bvor, smt_sbits);
+binary_primop_copy!(and_bits, "and_bits".to_string(), Val::Bits, Val::Bits, B::bitand, Exp::Bvand, smt_sbits);
+binary_primop_copy!(add_bits, "add_bits".to_string(), Val::Bits, Val::Bits, B::add, Exp::Bvadd, smt_sbits);
+binary_primop_copy!(sub_bits, "sub_bits".to_string(), Val::Bits, Val::Bits, B::sub, Exp::Bvsub, smt_sbits);
 
 fn add_bits_int<B: BV>(bits: Val<B>, n: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>, ExecError> {
     match (bits, n) {
@@ -514,7 +514,12 @@ fn add_bits_int<B: BV>(bits: Val<B>, n: Val<B>, solver: &mut Solver<B>) -> Resul
             let result = solver.fresh();
             let len = match solver.length(bits) {
                 Some(len) => len,
-                None => return Err(ExecError::Type("add_bits_int")),
+                None => {
+                    return Err(ExecError::Type(format!(
+                        "add_bits_int (solver cannot determine length) {:?} {:?}",
+                        &bits, &n
+                    )))
+                }
             };
             assert!(len <= 128);
             solver.add(Def::DefineConst(
@@ -527,7 +532,12 @@ fn add_bits_int<B: BV>(bits: Val<B>, n: Val<B>, solver: &mut Solver<B>) -> Resul
             let result = solver.fresh();
             let len = match solver.length(bits) {
                 Some(len) => len,
-                None => return Err(ExecError::Type("add_bits_int")),
+                None => {
+                    return Err(ExecError::Type(format!(
+                        "add_bits_int (solver cannot determine length) {:?} {:?}",
+                        &bits, &n
+                    )))
+                }
             };
             assert!(len <= 128);
             solver.add(Def::DefineConst(
@@ -536,7 +546,7 @@ fn add_bits_int<B: BV>(bits: Val<B>, n: Val<B>, solver: &mut Solver<B>) -> Resul
             ));
             Ok(Val::Symbolic(result))
         }
-        (_, _) => Err(ExecError::Type("add_bits_int")),
+        (bits, n) => Err(ExecError::Type(format!("add_bits_int {:?} {:?}", &bits, &n))),
     }
 }
 
@@ -547,7 +557,12 @@ fn sub_bits_int<B: BV>(bits: Val<B>, n: Val<B>, solver: &mut Solver<B>) -> Resul
             let result = solver.fresh();
             let len = match solver.length(bits) {
                 Some(len) => len,
-                None => return Err(ExecError::Type("sub_bits_int")),
+                None => {
+                    return Err(ExecError::Type(format!(
+                        "sub_bits_int (solver cannot determine length) {:?} {:?}",
+                        &bits, &n
+                    )))
+                }
             };
             assert!(len <= 128);
             solver.add(Def::DefineConst(
@@ -560,7 +575,12 @@ fn sub_bits_int<B: BV>(bits: Val<B>, n: Val<B>, solver: &mut Solver<B>) -> Resul
             let result = solver.fresh();
             let len = match solver.length(bits) {
                 Some(len) => len,
-                None => return Err(ExecError::Type("sub_bits_int")),
+                None => {
+                    return Err(ExecError::Type(format!(
+                        "sub_bits_int (solver cannot determine length) {:?} {:?}",
+                        &bits, &n
+                    )))
+                }
             };
             assert!(len <= 128);
             solver.add(Def::DefineConst(
@@ -569,7 +589,7 @@ fn sub_bits_int<B: BV>(bits: Val<B>, n: Val<B>, solver: &mut Solver<B>) -> Resul
             ));
             Ok(Val::Symbolic(result))
         }
-        (_, _) => Err(ExecError::Type("sub_bits_int")),
+        (bits, n) => Err(ExecError::Type(format!("sub_bits_int {:?} {:?}", &bits, &n))),
     }
 }
 
@@ -583,7 +603,7 @@ fn zeros<B: BV>(len: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>, ExecError
             }
         }
         Val::Symbolic(_) => Err(ExecError::SymbolicLength("zeros")),
-        _ => Err(ExecError::Type("zeros")),
+        _ => Err(ExecError::Type(format!("zeros {:?}", &len))),
     }
 }
 
@@ -597,7 +617,7 @@ fn ones<B: BV>(len: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>, ExecError>
             }
         }
         Val::Symbolic(_) => Err(ExecError::SymbolicLength("ones")),
-        _ => Err(ExecError::Type("ones")),
+        _ => Err(ExecError::Type(format!("ones {:?}", &len))),
     }
 }
 
@@ -630,8 +650,8 @@ macro_rules! extension {
     };
 }
 
-extension!(zero_extend, "zero_extend", Exp::ZeroExtend, B::zero_extend);
-extension!(sign_extend, "sign_extend", Exp::SignExtend, B::sign_extend);
+extension!(zero_extend, "zero_extend".to_string(), Exp::ZeroExtend, B::zero_extend);
+extension!(sign_extend, "sign_extend".to_string(), Exp::SignExtend, B::sign_extend);
 
 pub(crate) fn op_zero_extend<B: BV>(bits: Val<B>, len: u32, solver: &mut Solver<B>) -> Result<Val<B>, ExecError> {
     match bits {
@@ -646,11 +666,13 @@ pub(crate) fn op_zero_extend<B: BV>(bits: Val<B>, len: u32, solver: &mut Solver<
         Val::Symbolic(bits) => {
             let ext = match solver.length(bits) {
                 Some(orig_len) => len - orig_len,
-                None => return Err(ExecError::Type("op_zero_extend")),
+                None => {
+                    return Err(ExecError::Type(format!("op_zero_extend (solver cannot determine length) {:?}", &bits)))
+                }
             };
             solver.define_const(Exp::ZeroExtend(ext, Box::new(Exp::Var(bits)))).into()
         }
-        _ => Err(ExecError::Type("op_zero_extend")),
+        _ => Err(ExecError::Type(format!("op_zero_extend {:?}", &bits))),
     }
 }
 
@@ -677,7 +699,7 @@ fn replicate_bits<B: BV>(bits: Val<B>, times: Val<B>, solver: &mut Solver<B>) ->
                 solver.define_const(replicate_exp(Exp::Var(bits), times)).into()
             }
         }
-        (_, _) => Err(ExecError::Type("replicate_bits")),
+        (bits, times) => Err(ExecError::Type(format!("replicate_bits {:?} {:?}", &bits, &times))),
     }
 }
 
@@ -689,9 +711,9 @@ pub fn length_bits<B: BV>(bits: &Val<B>, solver: &mut Solver<B>) -> Result<u32, 
         Val::Bits(bits) => Ok(bits.len()),
         Val::Symbolic(bits) => match solver.length(*bits) {
             Some(len) => Ok(len),
-            None => Err(ExecError::Type("length_bits")),
+            None => Err(ExecError::Type(format!("length_bits (solver cannot determine length) {:?}", &bits))),
         },
-        _ => Err(ExecError::Type("length_bits")),
+        _ => Err(ExecError::Type(format!("length_bits {:?}", &bits))),
     }
 }
 
@@ -750,7 +772,7 @@ macro_rules! slice {
                 Ok(Val::Symbolic(sliced))
             }
 
-            _ => Err(ExecError::Type("slice!")),
+            _ => Err(ExecError::Type(format!("slice! {:?}", &$from))),
         }
     }};
 }
@@ -767,12 +789,12 @@ pub(crate) fn op_slice<B: BV>(
         Val::Bits(bits) => match from {
             Val::I64(from) => match bits.slice(from as u32, length) {
                 Some(bits) => Ok(Val::Bits(bits)),
-                None => Err(ExecError::Type("op_slice")),
+                None => Err(ExecError::Type("op_slice (can't slice)".to_string())),
             },
             _ if bits.is_zero() => Ok(Val::Bits(B::zeros(bits_length))),
             _ => slice!(bits_length, smt_sbits(bits), from, length as i128, solver),
         },
-        _ => Err(ExecError::Type("op_slice")),
+        _ => Err(ExecError::Type(format!("op_slice {:?}", &bits))),
     }
 }
 
@@ -789,15 +811,25 @@ fn slice_internal<B: BV>(
             Val::Bits(bits) => match from {
                 Val::I128(from) => match bits.slice(from as u32, length as u32) {
                     Some(bits) => Ok(Val::Bits(bits)),
-                    None => Err(ExecError::Type("slice_internal")),
+                    None => {
+                        // Out-of-range slices shouldn't happen in IR from well-typed Sail, but linearization can
+                        // produce them (although the result will be thrown away).  This should match the semantics
+                        // of the symbolic case but isn't tested because the results aren't used.
+                        match bits.shiftr(from).slice(0, length as u32) {
+                            Some(bits) => Ok(Val::Bits(bits)),
+                            None => {
+                                Err(ExecError::Type(format!("slice_internal (cannot slice) {:?} {:?}", &from, &length)))
+                            }
+                        }
+                    }
                 },
                 _ if bits.is_zero() => Ok(Val::Bits(B::zeros(bits_length))),
                 _ => slice!(bits_length, smt_sbits(bits), from, length, solver),
             },
-            _ => Err(ExecError::Type("slice_internal")),
+            _ => Err(ExecError::Type(format!("slice_internal {:?}", &bits))),
         },
         Val::Symbolic(_) => Err(ExecError::SymbolicLength("slice_internal")),
-        _ => Err(ExecError::Type("slice_internal")),
+        _ => Err(ExecError::Type(format!("slice_internal {:?}", &length))),
     }
 }
 
@@ -817,11 +849,13 @@ fn subrange_internal<B: BV>(
         }
         (Val::Bits(bits), Val::I128(high), Val::I128(low)) => match bits.extract(high as u32, low as u32) {
             Some(bits) => Ok(Val::Bits(bits)),
-            None => Err(ExecError::Type("subrange_internal")),
+            None => {
+                Err(ExecError::Type(format!("subrange_internal (cannot extract) {:?} {:?} {:?}", &bits, &high, &low)))
+            }
         },
         (_, _, Val::Symbolic(_)) => Err(ExecError::SymbolicLength("subrange_internal")),
         (_, Val::Symbolic(_), _) => Err(ExecError::SymbolicLength("subrange_internal")),
-        (_, _, _) => Err(ExecError::Type("subrange_internal")),
+        (bits, high, low) => Err(ExecError::Type(format!("subrange_internal {:?} {:?} {:?}", &bits, &high, &low))),
     }
 }
 
@@ -837,7 +871,7 @@ fn sail_truncate_lsb<B: BV>(bits: Val<B>, len: Val<B>, solver: &mut Solver<B>) -
     match (bits, len) {
         (Val::Bits(bits), Val::I128(len)) => match bits.truncate_lsb(len) {
             Some(truncated) => Ok(Val::Bits(truncated)),
-            None => Err(ExecError::Type("sail_truncateLSB")),
+            None => Err(ExecError::Type(format!("sail_truncateLSB (cannot truncate) {:?} {:?}", &bits, &len))),
         },
         (Val::Symbolic(bits), Val::I128(len)) => {
             if len == 0 {
@@ -846,11 +880,11 @@ fn sail_truncate_lsb<B: BV>(bits: Val<B>, len: Val<B>, solver: &mut Solver<B>) -
                 let low = orig_len - (len as u32);
                 solver.define_const(Exp::Extract(orig_len - 1, low, Box::new(Exp::Var(bits)))).into()
             } else {
-                Err(ExecError::Type("sail_truncateLSB"))
+                Err(ExecError::Type(format!("sail_truncateLSB (invalid length) {:?} {:?}", &bits, &len)))
             }
         }
         (_, Val::Symbolic(_)) => Err(ExecError::SymbolicLength("sail_truncateLSB")),
-        (_, _) => Err(ExecError::Type("sail_truncateLSB")),
+        (bits, len) => Err(ExecError::Type(format!("sail_truncateLSB {:?} {:?}", &bits, &len))),
     }
 }
 
@@ -862,9 +896,9 @@ fn sail_unsigned<B: BV>(bits: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>, 
                 assert!(length < 128);
                 solver.define_const(Exp::ZeroExtend(128 - length, Box::new(Exp::Var(bits)))).into()
             }
-            None => Err(ExecError::Type("sail_unsigned")),
+            None => Err(ExecError::Type(format!("sail_unsigned (solver cannot determine length) {:?}", &bits))),
         },
-        _ => Err(ExecError::Type("sail_unsigned")),
+        _ => Err(ExecError::Type(format!("sail_unsigned {:?}", &bits))),
     }
 }
 
@@ -876,9 +910,9 @@ fn sail_signed<B: BV>(bits: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>, Ex
                 assert!(length < 128);
                 solver.define_const(Exp::SignExtend(128 - length, Box::new(Exp::Var(bits)))).into()
             }
-            None => Err(ExecError::Type("sail_signed")),
+            None => Err(ExecError::Type(format!("sail_signed (solver cannot determine length) {:?}", &bits))),
         },
-        _ => Err(ExecError::Type("sail_signed")),
+        _ => Err(ExecError::Type(format!("sail_signed {:?}", &bits))),
     }
 }
 
@@ -895,7 +929,7 @@ fn shiftr<B: BV>(bits: Val<B>, shift: Val<B>, solver: &mut Solver<B>) -> Result<
                 };
                 solver.define_const(Exp::Bvlshr(Box::new(Exp::Var(x)), Box::new(shift))).into()
             }
-            None => Err(ExecError::Type("shiftr")),
+            None => Err(ExecError::Type(format!("shiftr {:?} {:?}", &x, &y))),
         },
         (Val::Symbolic(x), Val::I128(0)) => Ok(Val::Symbolic(x)),
         (Val::Symbolic(x), Val::I128(y)) => match solver.length(x) {
@@ -909,7 +943,7 @@ fn shiftr<B: BV>(bits: Val<B>, shift: Val<B>, solver: &mut Solver<B>) -> Result<
                 };
                 solver.define_const(Exp::Bvlshr(Box::new(Exp::Var(x)), Box::new(shift))).into()
             }
-            None => Err(ExecError::Type("shiftr")),
+            None => Err(ExecError::Type(format!("shiftr {:?} {:?}", &x, &y))),
         },
         (Val::Bits(x), Val::Symbolic(y)) => solver
             .define_const(Exp::Bvlshr(
@@ -918,7 +952,7 @@ fn shiftr<B: BV>(bits: Val<B>, shift: Val<B>, solver: &mut Solver<B>) -> Result<
             ))
             .into(),
         (Val::Bits(x), Val::I128(y)) => Ok(Val::Bits(x.shiftr(y))),
-        (_, _) => Err(ExecError::Type("shiftr")),
+        (bits, shift) => Err(ExecError::Type(format!("shiftr {:?} {:?}", &bits, &shift))),
     }
 }
 
@@ -935,7 +969,7 @@ fn arith_shiftr<B: BV>(bits: Val<B>, shift: Val<B>, solver: &mut Solver<B>) -> R
                 };
                 solver.define_const(Exp::Bvashr(Box::new(Exp::Var(x)), Box::new(shift))).into()
             }
-            None => Err(ExecError::Type("arith_shiftr")),
+            None => Err(ExecError::Type(format!("arith_shiftr {:?} {:?}", &x, &y))),
         },
         (Val::Symbolic(x), Val::I128(0)) => Ok(Val::Symbolic(x)),
         (Val::Symbolic(x), Val::I128(y)) => match solver.length(x) {
@@ -949,7 +983,7 @@ fn arith_shiftr<B: BV>(bits: Val<B>, shift: Val<B>, solver: &mut Solver<B>) -> R
                 };
                 solver.define_const(Exp::Bvashr(Box::new(Exp::Var(x)), Box::new(shift))).into()
             }
-            None => Err(ExecError::Type("arith_shiftr")),
+            None => Err(ExecError::Type(format!("arith_shiftr {:?} {:?}", &x, &y))),
         },
         (Val::Bits(x), Val::Symbolic(y)) => solver
             .define_const(Exp::Bvashr(
@@ -958,7 +992,7 @@ fn arith_shiftr<B: BV>(bits: Val<B>, shift: Val<B>, solver: &mut Solver<B>) -> R
             ))
             .into(),
         (Val::Bits(x), Val::I128(y)) => Ok(Val::Bits(x.arith_shiftr(y))),
-        (_, _) => Err(ExecError::Type("arith_shiftr")),
+        (bits, shift) => Err(ExecError::Type(format!("arith_shiftr {:?} {:?}", &bits, &shift))),
     }
 }
 
@@ -975,7 +1009,7 @@ fn shiftl<B: BV>(bits: Val<B>, len: Val<B>, solver: &mut Solver<B>) -> Result<Va
                 };
                 solver.define_const(Exp::Bvshl(Box::new(Exp::Var(x)), Box::new(shift))).into()
             }
-            None => Err(ExecError::Type("shiftl")),
+            None => Err(ExecError::Type(format!("shiftl {:?} {:?}", &x, &y))),
         },
         (Val::Symbolic(x), Val::I128(0)) => Ok(Val::Symbolic(x)),
         (Val::Symbolic(x), Val::I128(y)) => match solver.length(x) {
@@ -989,7 +1023,7 @@ fn shiftl<B: BV>(bits: Val<B>, len: Val<B>, solver: &mut Solver<B>) -> Result<Va
                 };
                 solver.define_const(Exp::Bvshl(Box::new(Exp::Var(x)), Box::new(shift))).into()
             }
-            None => Err(ExecError::Type("shiftl")),
+            None => Err(ExecError::Type(format!("shiftl {:?} {:?}", &x, &y))),
         },
         (Val::Bits(x), Val::Symbolic(y)) => solver
             .define_const(Exp::Bvshl(
@@ -998,7 +1032,7 @@ fn shiftl<B: BV>(bits: Val<B>, len: Val<B>, solver: &mut Solver<B>) -> Result<Va
             ))
             .into(),
         (Val::Bits(x), Val::I128(y)) => Ok(Val::Bits(x.shiftl(y))),
-        (_, _) => Err(ExecError::Type("shiftl")),
+        (bits, len) => Err(ExecError::Type(format!("shiftl {:?} {:?}", &bits, &len))),
     }
 }
 
@@ -1020,7 +1054,7 @@ fn shift_bits_right<B: BV>(bits: Val<B>, shift: Val<B>, solver: &mut Solver<B>) 
             let shift: u64 = (*y).try_into()?;
             Ok(Val::Bits(x.shiftr(shift as i128)))
         }
-        (_, _) => Err(ExecError::Type("shift_bits_right")),
+        (_, _) => Err(ExecError::Type(format!("shift_bits_right {:?} {:?}", &bits, &shift))),
     }
 }
 
@@ -1042,7 +1076,7 @@ fn shift_bits_left<B: BV>(bits: Val<B>, shift: Val<B>, solver: &mut Solver<B>) -
             let shift: u64 = (*y).try_into()?;
             Ok(Val::Bits(x.shiftl(shift as i128)))
         }
-        (_, _) => Err(ExecError::Type("shift_bits_left")),
+        (_, _) => Err(ExecError::Type(format!("shift_bits_left {:?} {:?}", &bits, &shift))),
     }
 }
 
@@ -1069,7 +1103,7 @@ pub(crate) fn append<B: BV>(lhs: Val<B>, rhs: Val<B>, solver: &mut Solver<B>) ->
             Some(z) => Ok(Val::Bits(z)),
             None => solver.define_const(Exp::Concat(Box::new(smt_sbits(x)), Box::new(smt_sbits(y)))).into(),
         },
-        (_, _) => Err(ExecError::Type("append")),
+        (lhs, rhs) => Err(ExecError::Type(format!("append {:?} {:?}", &lhs, &rhs))),
     }
 }
 
@@ -1088,7 +1122,7 @@ pub(crate) fn vector_access<B: BV>(vec: Val<B>, n: Val<B>, solver: &mut Solver<B
                     .define_const(Exp::Extract(0, 0, Box::new(Exp::Bvlshr(Box::new(Exp::Var(bits)), Box::new(shift)))))
                     .into()
             }
-            None => Err(ExecError::Type("vector_access")),
+            None => Err(ExecError::Type(format!("vector_access {:?} {:?}", &bits, &n))),
         },
         (Val::Symbolic(bits), Val::I128(n)) => match solver.length(bits) {
             Some(length) => {
@@ -1103,7 +1137,7 @@ pub(crate) fn vector_access<B: BV>(vec: Val<B>, n: Val<B>, solver: &mut Solver<B
                     .define_const(Exp::Extract(0, 0, Box::new(Exp::Bvlshr(Box::new(Exp::Var(bits)), Box::new(shift)))))
                     .into()
             }
-            None => Err(ExecError::Type("vector_access")),
+            None => Err(ExecError::Type(format!("vector_access {:?} {:?}", &bits, &n))),
         },
         (Val::Bits(bits), Val::Symbolic(n)) => {
             let shift = Exp::Extract(bits.len() - 1, 0, Box::new(Exp::Var(n)));
@@ -1113,13 +1147,13 @@ pub(crate) fn vector_access<B: BV>(vec: Val<B>, n: Val<B>, solver: &mut Solver<B
         }
         (Val::Bits(bits), Val::I128(n)) => match bits.slice(n as u32, 1) {
             Some(bit) => Ok(Val::Bits(bit)),
-            None => Err(ExecError::Type("vector_access")),
+            None => Err(ExecError::Type(format!("vector_access {:?} {:?}", &bits, &n))),
         },
         (Val::Vector(vec), Val::I128(n)) => match vec.get(n as usize) {
             Some(elem) => Ok(elem.clone()),
             None => Err(ExecError::OutOfBounds("vector_access")),
         },
-        (_, _) => Err(ExecError::Type("vector_access")),
+        (vec, n) => Err(ExecError::Type(format!("vector_access {:?} {:?}", &vec, &n))),
     }
 }
 
@@ -1237,7 +1271,7 @@ fn set_slice_internal<B: BV>(
             }
         }
         (Val::Bits(bits), Val::I128(n), Val::Bits(update)) => Ok(Val::Bits(bits.set_slice(n as u32, update))),
-        (_, _, _) => Err(ExecError::Type("set_slice")),
+        (bits, n, update) => Err(ExecError::Type(format!("set_slice {:?} {:?} {:?}", &bits, &n, &update))),
     }
 }
 
@@ -1289,7 +1323,7 @@ fn set_slice_int_internal<B: BV>(
             }
         }
         (Val::I128(int), Val::I128(n), Val::Bits(update)) => Ok(Val::I128(B::set_slice_int(int, n as u32, update))),
-        (_, _, _) => Err(ExecError::Type("set_slice_int")),
+        (int, n, update) => Err(ExecError::Type(format!("set_slice_int {:?} {:?} {:?}", &int, &n, &update))),
     }
 }
 
@@ -1343,17 +1377,26 @@ pub(crate) fn op_set_slice<B: BV>(
             }
         }
         (Val::Bits(bits), Val::I64(n), Val::Bits(update)) => Ok(Val::Bits(bits.set_slice(n as u32, update))),
-        (_, _, _) => Err(ExecError::Type("set_slice")),
+        (bits, n, update) => Err(ExecError::Type(format!("set_slice {:?} {:?} {:?}", &bits, &n, &update))),
     }
 }
 
 /// `vector_update` is a special case of `set_slice` where the update
-/// is a bitvector of length 1
-fn vector_update<B: BV>(args: Vec<Val<B>>, solver: &mut Solver<B>, _: &mut LocalFrame<B>) -> Result<Val<B>, ExecError> {
+/// is a bitvector of length 1. It can also update ordinary (non bit-)
+/// vectors.
+pub fn vector_update<B: BV>(
+    args: Vec<Val<B>>,
+    solver: &mut Solver<B>,
+    _: &mut LocalFrame<B>,
+) -> Result<Val<B>, ExecError> {
     let arg0 = args[0].clone();
     match arg0 {
         Val::Vector(mut vec) => match args[1] {
             Val::I128(n) => {
+                vec[n as usize] = args[2].clone();
+                Ok(Val::Vector(vec))
+            }
+            Val::I64(n) => {
                 vec[n as usize] = args[2].clone();
                 Ok(Val::Vector(vec))
             }
@@ -1374,7 +1417,7 @@ fn vector_update<B: BV>(args: Vec<Val<B>>, solver: &mut Solver<B>, _: &mut Local
             }
             _ => {
                 eprintln!("{:?}", args);
-                Err(ExecError::Type("vector_update (index)"))
+                Err(ExecError::Type(format!("vector_update (index) {:?}", &args[1])))
             }
         },
         Val::Bits(_) => {
@@ -1385,7 +1428,7 @@ fn vector_update<B: BV>(args: Vec<Val<B>>, solver: &mut Solver<B>, _: &mut Local
         Val::Symbolic(v) if solver.is_bitvector(v) => {
             set_slice_internal(arg0, args[1].clone(), args[2].clone(), solver)
         }
-        _ => Err(ExecError::Type("vector_update")),
+        _ => Err(ExecError::Type(format!("vector_update {:?}", &arg0))),
     }
 }
 
@@ -1432,10 +1475,10 @@ fn get_slice_int_internal<B: BV>(
                 }
                 _ => slice!(128, smt_i128(n), from, length, solver),
             },
-            _ => Err(ExecError::Type("get_slice_int")),
+            _ => Err(ExecError::Type(format!("get_slice_int {:?}", &length))),
         },
         Val::Symbolic(_) => Err(ExecError::SymbolicLength("get_slice_int")),
-        _ => Err(ExecError::Type("get_slice_int")),
+        _ => Err(ExecError::Type(format!("get_slice_int length is {:?}", &length))),
     }
 }
 
@@ -1450,14 +1493,14 @@ fn unimplemented<B: BV>(_: Vec<Val<B>>, _: &mut Solver<B>, _: &mut LocalFrame<B>
 fn eq_string<B: BV>(lhs: Val<B>, rhs: Val<B>, _: &mut Solver<B>) -> Result<Val<B>, ExecError> {
     match (lhs, rhs) {
         (Val::String(lhs), Val::String(rhs)) => Ok(Val::Bool(lhs == rhs)),
-        (_, _) => Err(ExecError::Type("eq_string")),
+        (lhs, rhs) => Err(ExecError::Type(format!("eq_string {:?} {:?}", &lhs, &rhs))),
     }
 }
 
 fn concat_str<B: BV>(lhs: Val<B>, rhs: Val<B>, _: &mut Solver<B>) -> Result<Val<B>, ExecError> {
     match (lhs, rhs) {
         (Val::String(lhs), Val::String(rhs)) => Ok(Val::String(format!("{}{}", lhs, rhs))),
-        (_, _) => Err(ExecError::Type("concat_str")),
+        (lhs, rhs) => Err(ExecError::Type(format!("concat_str {:?} {:?}", &lhs, &rhs))),
     }
 }
 
@@ -1465,7 +1508,7 @@ fn hex_str<B: BV>(n: Val<B>, _: &mut Solver<B>) -> Result<Val<B>, ExecError> {
     match n {
         Val::I128(n) => Ok(Val::String(format!("0x{:x}", n))),
         Val::Symbolic(v) => Ok(Val::String(format!("0x[{}]", v))),
-        _ => Err(ExecError::Type("hex_str")),
+        _ => Err(ExecError::Type(format!("hex_str {:?}", &n))),
     }
 }
 
@@ -1473,7 +1516,7 @@ fn dec_str<B: BV>(n: Val<B>, _: &mut Solver<B>) -> Result<Val<B>, ExecError> {
     match n {
         Val::I128(n) => Ok(Val::String(format!("{}", n))),
         Val::Symbolic(v) => Ok(Val::String(format!("[{}]", v))),
-        _ => Err(ExecError::Type("dec_str")),
+        _ => Err(ExecError::Type(format!("dec_str {:?}", &n))),
     }
 }
 
@@ -1490,7 +1533,7 @@ fn string_to_i128<B: BV>(s: Val<B>, _: &mut Solver<B>) -> Result<Val<B>, ExecErr
             Err(ExecError::Overflow)
         }
     } else {
-        Err(ExecError::Type("%string->%int"))
+        Err(ExecError::Type(format!("%string->%int {:?}", &s)))
     }
 }
 
@@ -1511,8 +1554,34 @@ fn eq_anything<B: BV>(lhs: Val<B>, rhs: Val<B>, solver: &mut Solver<B>) -> Resul
         (Val::Bool(lhs), Val::Bool(rhs)) => Ok(Val::Bool(lhs == rhs)),
         (Val::I128(lhs), Val::I128(rhs)) => Ok(Val::Bool(lhs == rhs)),
         (Val::I64(lhs), Val::I64(rhs)) => Ok(Val::Bool(lhs == rhs)),
+        (Val::Struct(lhs), Val::Struct(rhs)) => {
+            let mut vars = vec![];
+            for (k, lhs_v) in lhs {
+                let rhs_v = match rhs.get(&k) {
+                    Some(v) => v,
+                    None => return Err(ExecError::Type("eq_anything None".to_string())),
+                };
+                let result = eq_anything(lhs_v, rhs_v.clone(), solver)?;
+                match result {
+                    Val::Bool(true) => (),
+                    Val::Bool(false) => return Ok(Val::Bool(false)),
+                    Val::Symbolic(r) => vars.push(r),
+                    _ => return Err(ExecError::Type(format!("eq_anything {:?}", &result))),
+                }
+            }
+            match vars.pop() {
+                None => Ok(Val::Bool(true)),
+                Some(init) => {
+                    let exp = vars
+                        .iter()
+                        .map(|v| Exp::Var(*v))
+                        .fold(Exp::Var(init), |e1, e2| Exp::And(Box::new(e1), Box::new(e2)));
+                    solver.define_const(exp).into()
+                }
+            }
+        }
 
-        (_, _) => Err(ExecError::Type("eq_anything")),
+        (lhs, rhs) => Err(ExecError::Type(format!("eq_anything {:?} {:?}", &lhs, &rhs))),
     }
 }
 
@@ -1537,14 +1606,14 @@ fn neq_anything<B: BV>(lhs: Val<B>, rhs: Val<B>, solver: &mut Solver<B>) -> Resu
         }
         (Val::Enum(lhs), Val::Enum(rhs)) => Ok(Val::Bool(lhs != rhs)),
 
-        (_, _) => Err(ExecError::Type("neq_anything")),
+        (lhs, rhs) => Err(ExecError::Type(format!("neq_anything {:?} {:?}", &lhs, &rhs))),
     }
 }
 
 fn string_startswith<B: BV>(s: Val<B>, prefix: Val<B>, _: &mut Solver<B>) -> Result<Val<B>, ExecError> {
     match (s, prefix) {
         (Val::String(s), Val::String(prefix)) => Ok(Val::Bool(s.starts_with(&prefix))),
-        _ => Err(ExecError::Type("string_startswith")),
+        other => Err(ExecError::Type(format!("string_startswith {:?}", &other))),
     }
 }
 
@@ -1552,21 +1621,21 @@ fn string_length<B: BV>(s: Val<B>, _: &mut Solver<B>) -> Result<Val<B>, ExecErro
     if let Val::String(s) = s {
         Ok(Val::I128(s.len() as i128))
     } else {
-        Err(ExecError::Type("string_length"))
+        Err(ExecError::Type(format!("string_length {:?}", &s)))
     }
 }
 
 fn string_drop<B: BV>(s: Val<B>, n: Val<B>, _: &mut Solver<B>) -> Result<Val<B>, ExecError> {
     match (s, n) {
         (Val::String(s), Val::I128(n)) => Ok(Val::String(s.get((n as usize)..).unwrap_or("").to_string())),
-        _ => Err(ExecError::Type("string_drop")),
+        other => Err(ExecError::Type(format!("string_drop {:?}", &other))),
     }
 }
 
 fn string_take<B: BV>(s: Val<B>, n: Val<B>, _: &mut Solver<B>) -> Result<Val<B>, ExecError> {
     match (s, n) {
         (Val::String(s), Val::I128(n)) => Ok(Val::String(s.get(..(n as usize)).unwrap_or(&s).to_string())),
-        _ => Err(ExecError::Type("string_take")),
+        other => Err(ExecError::Type(format!("string_take {:?}", &other))),
     }
 }
 
@@ -1574,7 +1643,7 @@ fn string_of_bits<B: BV>(bv: Val<B>, _: &mut Solver<B>) -> Result<Val<B>, ExecEr
     match bv {
         Val::Bits(bv) => Ok(Val::String(format!("{}", bv))),
         Val::Symbolic(v) => Ok(Val::String(format!("v{}", v))),
-        _ => Err(ExecError::Type("string_of_bits")),
+        other => Err(ExecError::Type(format!("string_of_bits {:?}", &other))),
     }
 }
 
@@ -1582,7 +1651,7 @@ fn decimal_string_of_bits<B: BV>(bv: Val<B>, _: &mut Solver<B>) -> Result<Val<B>
     match bv {
         Val::Bits(bv) => Ok(Val::String(format!("{}", bv.signed()))),
         Val::Symbolic(v) => Ok(Val::String(format!("v{}", v))),
-        _ => Err(ExecError::Type("decimal_string_of_bits")),
+        other => Err(ExecError::Type(format!("decimal_string_of_bits {:?}", &other))),
     }
 }
 
@@ -1590,7 +1659,7 @@ fn string_of_int<B: BV>(n: Val<B>, _: &mut Solver<B>) -> Result<Val<B>, ExecErro
     match n {
         Val::I128(n) => Ok(Val::String(format!("{}", n))),
         Val::Symbolic(v) => Ok(Val::String(format!("v{}", v))),
-        _ => Err(ExecError::Type("string_of_int")),
+        other => Err(ExecError::Type(format!("string_of_int {:?}", &other))),
     }
 }
 
@@ -1657,7 +1726,7 @@ fn undefined_bitvector<B: BV>(sz: Val<B>, solver: &mut Solver<B>) -> Result<Val<
     if let Val::I128(sz) = sz {
         solver.declare_const(Ty::BitVec(sz as u32)).into()
     } else {
-        Err(ExecError::Type("undefined_bitvector"))
+        Err(ExecError::Type(format!("undefined_bitvector {:?}", &sz)))
     }
 }
 
@@ -1699,7 +1768,7 @@ fn one_if<B: BV>(condition: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>, Ex
                 Box::new(smt_sbits(B::BIT_ZERO)),
             ))
             .into(),
-        _ => Err(ExecError::Type("one_if")),
+        _ => Err(ExecError::Type(format!("one_if {:?}", &condition))),
     }
 }
 
@@ -1714,7 +1783,7 @@ fn zero_if<B: BV>(condition: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>, E
                 Box::new(smt_sbits(B::BIT_ONE)),
             ))
             .into(),
-        _ => Err(ExecError::Type("one_if")),
+        other => Err(ExecError::Type(format!("one_if {:?}", &other))),
     }
 }
 
@@ -1726,7 +1795,7 @@ fn cons<B: BV>(x: Val<B>, xs: Val<B>, _: &mut Solver<B>) -> Result<Val<B>, ExecE
             xs.push(x);
             Ok(Val::List(xs))
         }
-        _ => Err(ExecError::Type("cons")),
+        _ => Err(ExecError::Type(format!("cons {:?}", &xs))),
     }
 }
 
@@ -1739,7 +1808,7 @@ pub fn smt_value<B: BV>(v: &Val<B>) -> Result<Exp, ExecError> {
         Val::Bool(b) => Exp::Bool(*b),
         Val::Enum(e) => Exp::Enum(*e),
         Val::Symbolic(v) => Exp::Var(*v),
-        _ => return Err(ExecError::Type("smt_value")),
+        _ => return Err(ExecError::Type(format!("smt_value {:?}", &v))),
     })
 }
 
@@ -1770,12 +1839,16 @@ fn choice<B: BV>(xs: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>, ExecError
             solver.add(Def::DefineConst(choice, choice_chain(sym, 0, sz, xs)?));
             Ok(Val::Symbolic(choice))
         }
-        _ => Err(ExecError::Type("cons")),
+        _ => Err(ExecError::Type(format!("choice {:?}", &xs))),
     }
 }
 
 fn read_mem<B: BV>(args: Vec<Val<B>>, solver: &mut Solver<B>, frame: &mut LocalFrame<B>) -> Result<Val<B>, ExecError> {
-    frame.memory().read(args[0].clone(), args[2].clone(), args[3].clone(), solver)
+    frame.memory_mut().read(args[0].clone(), args[2].clone(), args[3].clone(), solver, false)
+}
+
+fn read_memt<B: BV>(args: Vec<Val<B>>, solver: &mut Solver<B>, frame: &mut LocalFrame<B>) -> Result<Val<B>, ExecError> {
+    frame.memory_mut().read(args[0].clone(), args[1].clone(), args[2].clone(), solver, true)
 }
 
 fn bad_read<B: BV>(_: Val<B>, _: &mut Solver<B>) -> Result<Val<B>, ExecError> {
@@ -1783,7 +1856,15 @@ fn bad_read<B: BV>(_: Val<B>, _: &mut Solver<B>) -> Result<Val<B>, ExecError> {
 }
 
 fn write_mem<B: BV>(args: Vec<Val<B>>, solver: &mut Solver<B>, frame: &mut LocalFrame<B>) -> Result<Val<B>, ExecError> {
-    frame.memory_mut().write(args[0].clone(), args[2].clone(), args[4].clone(), solver)
+    frame.memory_mut().write(args[0].clone(), args[2].clone(), args[4].clone(), solver, None)
+}
+
+fn write_memt<B: BV>(
+    args: Vec<Val<B>>,
+    solver: &mut Solver<B>,
+    frame: &mut LocalFrame<B>,
+) -> Result<Val<B>, ExecError> {
+    frame.memory_mut().write(args[0].clone(), args[1].clone(), args[3].clone(), solver, Some(args[4].clone()))
 }
 
 fn bad_write<B: BV>(_: Val<B>, _: &mut Solver<B>) -> Result<Val<B>, ExecError> {
@@ -1864,13 +1945,39 @@ fn monomorphize<B: BV>(val: Val<B>, _: &mut Solver<B>) -> Result<Val<B>, ExecErr
     Ok(val)
 }
 
-fn mark_register<B: BV>(val: Val<B>, mark: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>, ExecError> {
-    match (val, mark) {
-        (Val::Ref(reg), Val::String(mark)) => {
-            solver.add_event(Event::MarkReg { reg, mark });
+fn mark_register<B: BV>(r: Val<B>, mark: Val<B>, solver: &mut Solver<B>) -> Result<Val<B>, ExecError> {
+    match (r, mark) {
+        (Val::Ref(r), Val::String(mark)) => {
+            solver.add_event(Event::MarkReg { regs: vec![r], mark });
             Ok(Val::Unit)
         }
-        _ => Err(ExecError::Type("mark_register")),
+        (r, mark) => Err(ExecError::Type(format!("mark_register {:?} {:?}", &r, &mark))),
+    }
+}
+
+fn mark_register_pair_internal<B: BV>(
+    r1: Val<B>,
+    r2: Val<B>,
+    mark: Val<B>,
+    solver: &mut Solver<B>
+) -> Result<Val<B>, ExecError> {
+    match (r1, r2, mark) {
+        (Val::Ref(r1), Val::Ref(r2), Val::String(mark)) => {
+            solver.add_event(Event::MarkReg { regs: vec![r1, r2], mark });
+            Ok(Val::Unit)
+        }
+        (r1, r2, mark) => Err(ExecError::Type(format!("mark_register_pair {:?} {:?} {:?}", &r1, &r2, &mark))),
+    }
+}
+
+fn mark_register_pair<B: BV>(mut args: Vec<Val<B>>, solver: &mut Solver<B>, _: &mut LocalFrame<B>) -> Result<Val<B>, ExecError> {
+    if args.len() == 3 {
+        let mark = args.pop().unwrap();
+        let r2 = args.pop().unwrap();
+        let r1 = args.pop().unwrap();
+        mark_register_pair_internal(r1, r2, mark, solver)
+    } else {
+        Err(ExecError::Type("Incorrect number of arguments for mark_register_pair".to_string()))
     }
 }
 
@@ -1926,25 +2033,37 @@ fn count_leading_zeros<B: BV>(bv: Val<B>, solver: &mut Solver<B>) -> Result<Val<
             if let Some(len) = solver.length(bv) {
                 smt_clz(bv, len, solver).into()
             } else {
-                Err(ExecError::Type("count_leading_zeros"))
+                Err(ExecError::Type("count_leading_zeros (solver could not determine length)".to_string()))
             }
         }
-        _ => Err(ExecError::Type("count_leading_zeros")),
+        _ => Err(ExecError::Type(format!("count_leading_zeros {:?}", &bv))),
+    }
+}
+
+fn build_ite<B: BV>(b: Sym, lhs: &Val<B>, rhs: &Val<B>, solver: &mut Solver<B>) -> Result<Val<B>, ExecError> {
+    match (lhs, rhs) {
+        (Val::Struct(l_fields), Val::Struct(r_fields)) => {
+            let fields: Result<_, _> = l_fields
+                .iter()
+                .map(|(k, l_val)| match r_fields.get(k) {
+                    None => Err(ExecError::Type(format!("build_ite {:?}", &k))),
+                    Some(r_val) => Ok((*k, build_ite(b, l_val, r_val, solver)?)),
+                })
+                .collect();
+            Ok(Val::Struct(fields?))
+        }
+        _ => solver
+            .define_const(Exp::Ite(Box::new(Exp::Var(b)), Box::new(smt_value(lhs)?), Box::new(smt_value(rhs)?)))
+            .into(),
     }
 }
 
 fn ite<B: BV>(args: Vec<Val<B>>, solver: &mut Solver<B>, _: &mut LocalFrame<B>) -> Result<Val<B>, ExecError> {
     match args[0] {
-        Val::Symbolic(b) => solver
-            .define_const(Exp::Ite(
-                Box::new(Exp::Var(b)),
-                Box::new(smt_value(&args[1])?),
-                Box::new(smt_value(&args[2])?),
-            ))
-            .into(),
+        Val::Symbolic(b) => build_ite(b, &args[1], &args[2], solver),
         Val::Bool(true) => Ok(args[1].clone()),
         Val::Bool(false) => Ok(args[2].clone()),
-        _ => Err(ExecError::Type("ite")),
+        _ => Err(ExecError::Type(format!("ite {:?}", &args[0]))),
     }
 }
 
@@ -2085,11 +2204,14 @@ pub fn variadic_primops<B: BV>() -> HashMap<String, Variadic<B>> {
     primops.insert("get_slice_int".to_string(), get_slice_int as Variadic<B>);
     primops.insert("set_slice_int".to_string(), set_slice_int as Variadic<B>);
     primops.insert("platform_read_mem".to_string(), read_mem as Variadic<B>);
+    primops.insert("platform_read_memt".to_string(), read_memt as Variadic<B>);
     primops.insert("platform_write_mem".to_string(), write_mem as Variadic<B>);
+    primops.insert("platform_write_memt".to_string(), write_memt as Variadic<B>);
     primops.insert("platform_write_mem_ea".to_string(), write_mem_ea as Variadic<B>);
     primops.insert("platform_cache_maintenance".to_string(), cache_maintenance as Variadic<B>);
     primops.insert("elf_entry".to_string(), elf_entry as Variadic<B>);
     primops.insert("ite".to_string(), ite as Variadic<B>);
+    primops.insert("mark_register_pair".to_string(), mark_register_pair as Variadic<B>);
     // We explicitly don't handle anything real number related right now
     primops.insert("%string->%real".to_string(), unimplemented as Variadic<B>);
     primops.insert("neg_real".to_string(), unimplemented as Variadic<B>);
@@ -2114,7 +2236,7 @@ pub fn variadic_primops<B: BV>() -> HashMap<String, Variadic<B>> {
     primops
 }
 
-pub struct Primops<B> {
+pub struct Primops<B: BV> {
     pub unary: HashMap<String, Unary<B>>,
     pub binary: HashMap<String, Binary<B>>,
     pub variadic: HashMap<String, Variadic<B>>,

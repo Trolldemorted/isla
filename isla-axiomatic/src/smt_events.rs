@@ -34,6 +34,7 @@ use std::io::Write;
 use isla_lib::concrete::BV;
 use isla_lib::config::{ISAConfig, Kind};
 use isla_lib::ir::{Name, SharedState, Val};
+use isla_lib::memory::Memory;
 use isla_lib::smt::{Event, Sym};
 
 use isla_cat::smt::Sexp;
@@ -41,7 +42,7 @@ use isla_cat::smt::Sexp;
 use crate::axiomatic::relations::*;
 use crate::axiomatic::{AxEvent, ExecutionInfo, Pairs};
 use crate::footprint_analysis::Footprint;
-use crate::litmus::{opcode_from_objdump, Litmus, Loc, Prop};
+use crate::litmus::{opcode_from_objdump, Litmus, exp::Loc, exp::Exp};
 
 fn smt_bitvec<B: BV>(val: &Val<B>) -> String {
     match val {
@@ -107,14 +108,14 @@ fn read_write_pair<B: BV>(ev1: &AxEvent<B>, ev2: &AxEvent<B>) -> Sexp {
             if bv1 == bv2 {
                 True
             } else {
-                Literal(format!("(= {} {})", bv1, bv2))
+                False
             }
         }
         (_, _) => False,
     }
 }
 
-fn read_initial_symbolic<B: BV>(sym: Sym, addr1: &Val<B>, bytes: u32, litmus: &Litmus<B>) -> Sexp {
+fn read_initial_symbolic<B: BV>(sym: Sym, addr1: &Val<B>, bytes: u32, litmus: &Litmus<B>, memory: &Memory<B>) -> Sexp {
     let mut expr = "".to_string();
     let mut ites = 0;
 
@@ -131,7 +132,25 @@ fn read_initial_symbolic<B: BV>(sym: Sym, addr1: &Val<B>, bytes: u32, litmus: &L
         ites += 1
     }
 
-    expr = format!("{}(= v{} {})", expr, sym, B::new(0, 8 * bytes));
+    let region_info = if let Val::Bits(concrete_addr) = addr1 {
+        if let Some(region) = memory.in_custom_region(concrete_addr.lower_u64()) {
+            Some((region, concrete_addr.lower_u64()))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    if let Some((region, concrete_addr)) = region_info {
+        if let Some(bv) = region.initial_value(concrete_addr, bytes) {
+            expr = format!("{}(= v{} {})", expr, sym, bv);
+        } else {
+            expr = format!("{}(= v{} {})", expr, sym, B::new(0, 8 * bytes));
+        }
+    } else {
+        expr = format!("{}(= v{} {})", expr, sym, B::new(0, 8 * bytes));
+    }
 
     for _ in 0..ites {
         expr = format!("{})", expr)
@@ -140,7 +159,7 @@ fn read_initial_symbolic<B: BV>(sym: Sym, addr1: &Val<B>, bytes: u32, litmus: &L
     Sexp::Literal(expr)
 }
 
-fn read_initial_concrete<B: BV>(bv: B, addr1: &Val<B>, litmus: &Litmus<B>) -> Sexp {
+fn read_initial_concrete<B: BV>(bv: B, addr1: &Val<B>, litmus: &Litmus<B>, memory: &Memory<B>) -> Sexp {
     let mut expr = "".to_string();
     let mut ites = 0;
 
@@ -156,7 +175,25 @@ fn read_initial_concrete<B: BV>(bv: B, addr1: &Val<B>, litmus: &Litmus<B>) -> Se
         ites += 1
     }
 
-    expr = format!("{}{}", expr, if bv.is_zero() { "true" } else { "false" });
+    let region_info = if let Val::Bits(concrete_addr) = addr1 {
+        if let Some(region) = memory.in_custom_region(concrete_addr.lower_u64()) {
+            Some((region, concrete_addr.lower_u64()))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    if let Some((region, concrete_addr)) = region_info {
+        expr = format!(
+            "{}{}",
+            expr,
+            if Some(bv) == region.initial_value(concrete_addr, bv.len() / 8) { "true" } else { "false" }
+        );
+    } else {
+        expr = format!("{}{}", expr, if bv.is_zero() { "true" } else { "false" });
+    }
 
     for _ in 0..ites {
         expr = format!("{})", expr)
@@ -186,11 +223,11 @@ fn initial_write_values<B: BV>(addr_name: &str, width: u32, litmus: &Litmus<B>) 
 
 /// Some symbolic locations can have custom initial values, otherwise
 /// they are always read as zero.
-fn read_initial<B: BV>(ev: &AxEvent<B>, litmus: &Litmus<B>) -> Sexp {
+fn read_initial<B: BV>(ev: &AxEvent<B>, litmus: &Litmus<B>, memory: &Memory<B>) -> Sexp {
     use Sexp::*;
     match (ev.read_value(), ev.address()) {
-        (Some((Val::Symbolic(sym), bytes)), Some(addr)) => read_initial_symbolic(*sym, addr, bytes, litmus),
-        (Some((Val::Bits(bv), _)), Some(addr)) => read_initial_concrete(*bv, addr, litmus),
+        (Some((Val::Symbolic(sym), bytes)), Some(addr)) => read_initial_symbolic(*sym, addr, bytes, litmus, memory),
+        (Some((Val::Bits(bv), _)), Some(addr)) => read_initial_concrete(*bv, addr, litmus, memory),
         _ => False,
     }
 }
@@ -312,43 +349,54 @@ where
     sexp
 }
 
-fn eq_loc_to_smt<B: BV>(loc: &Loc, bv: B, final_writes: &HashMap<(Name, usize), &Val<B>>) -> String {
+fn eq_loc_to_smt<B: BV>(loc: &Loc, exp: &Exp, final_writes: &HashMap<(Name, usize), &Val<B>>) -> String {
     use Loc::*;
     match loc {
         Register { reg, thread_id } => match final_writes.get(&(*reg, *thread_id)) {
-            Some(Val::Symbolic(sym)) => format!("(= v{} {})", sym, bv),
-            Some(Val::Bits(reg_bv)) => format!("(= {} {})", reg_bv, bv),
+            Some(Val::Symbolic(sym)) => format!("(= v{} {})", sym, exp_to_smt(exp, final_writes)),
+            Some(Val::Bits(reg_bv)) => format!("(= {} {})", reg_bv, exp_to_smt(exp, final_writes)),
             Some(_) => unreachable!(),
-            None => format!("(= #x000000000000DEAD {})", bv),
+            None => "false".to_string(),
         },
-        LastWriteTo { address, bytes } => format!("(last_write_to_{} {} {})", bytes * 8, B::new(*address, 64), bv),
+        LastWriteTo { address, bytes } => format!("(last_write_to_{} {} {})", bytes * 8, B::new(*address, 64), exp_to_smt(exp, final_writes)),
     }
 }
 
-fn prop_to_smt<B: BV>(prop: &Prop<B>, final_writes: &HashMap<(Name, usize), &Val<B>>) -> String {
-    use Prop::*;
-    match prop {
-        EqLoc(loc, bv) => eq_loc_to_smt(loc, *bv, final_writes),
-        And(props) => {
+fn exp_to_smt<B: BV>(exp: &Exp, final_writes: &HashMap<(Name, usize), &Val<B>>) -> String {
+    use Exp::*;
+    match exp {
+        EqLoc(loc, exp) => eq_loc_to_smt(loc, exp, final_writes),
+        Id(id) => id.to_string(),
+        App(f, exps) => {
+            let mut args = String::new();
+            for exp in exps {
+                args = format!("{} {}", args, exp_to_smt(exp, final_writes))
+            }
+            format!("({}{})", f, args)
+        }
+        And(exps) => {
             let mut conjs = String::new();
-            for prop in props {
-                conjs = format!("{} {}", conjs, prop_to_smt(prop, final_writes))
+            for exp in exps {
+                conjs = format!("{} {}", conjs, exp_to_smt(exp, final_writes))
             }
             format!("(and{})", conjs)
         }
-        Or(props) => {
+        Or(exps) => {
             let mut disjs = String::new();
-            for prop in props {
-                disjs = format!("{} {}", disjs, prop_to_smt(prop, final_writes))
+            for exp in exps {
+                disjs = format!("{} {}", disjs, exp_to_smt(exp, final_writes))
             }
             format!("(or{})", disjs)
         }
-        Implies(prop1, prop2) => {
-            format!("(=> {} {})", prop_to_smt(prop1, final_writes), prop_to_smt(prop2, final_writes))
+        Implies(exp1, exp2) => {
+            format!("(=> {} {})", exp_to_smt(exp1, final_writes), exp_to_smt(exp2, final_writes))
         }
-        Not(prop) => format!("(not {})", prop_to_smt(prop, final_writes)),
+        Not(exp) => format!("(not {})", exp_to_smt(exp, final_writes)),
         True => "true".to_string(),
         False => "false".to_string(),
+        Bin(bv) => format!("#b{}", bv),
+        Hex(bv) => format!("#x{}", bv),
+        Nat(n) => B::from_u64(*n).to_string(),
     }
 }
 
@@ -378,6 +426,7 @@ pub fn smt_of_candidate<B: BV>(
     litmus: &Litmus<B>,
     ignore_ifetch: bool,
     footprints: &HashMap<B, Footprint>,
+    memory: &Memory<B>,
     shared_state: &SharedState<B>,
     isa_config: &ISAConfig<B>,
 ) -> Result<(), Box<dyn Error>> {
@@ -458,7 +507,7 @@ pub fn smt_of_candidate<B: BV>(
         .write_set(output, set)?;
     }
 
-    smt_condition_set(|ev| read_initial(ev, litmus), events).write_set(output, "r-initial")?;
+    smt_condition_set(|ev| read_initial(ev, litmus, memory), events).write_set(output, "r-initial")?;
     if !ignore_ifetch {
         smt_condition_set(ifetch_match, events).write_set(output, "ifetch-match")?;
         smt_condition_set(|ev| ifetch_initial(ev, litmus), events).write_set(output, "ifetch-initial")?;
@@ -505,7 +554,7 @@ pub fn smt_of_candidate<B: BV>(
     }
 
     writeln!(output, "; === FINAL ASSERTION ===\n")?;
-    writeln!(output, "(assert {})\n", prop_to_smt(&litmus.final_assertion, &exec.final_writes))?;
+    writeln!(output, "(assert {})\n", exp_to_smt(&litmus.final_assertion, &exec.final_writes))?;
 
     writeln!(output, "; === BARRIERS ===\n")?;
 
